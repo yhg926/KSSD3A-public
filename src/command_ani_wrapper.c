@@ -82,7 +82,7 @@ static struct argp_option opt_ani[] =
 		{"anicut", 'n', "<FLOAT>", 0, "Skip reports with ANI below this value. [0.95]", ANI_GROUP_FILTER},
 		{"control", 'c', "<FLOAT>", 0, "Skip duplicated samples with distance below this value. [0]", ANI_GROUP_FILTER},
 		{"ctxcut", 't', "<INT>", 0, "Skip reports with overlapped context count below this value. [3]", ANI_GROUP_FILTER},
-		{"slmetrics", 's', "<+-1..8>", 0, "Metric: Best(1), Recalibrated(2), CtxMoE(3), Naive(4), MashD(5), AafD(6), MashD_if_far(7), AafD_if_far(8). For unassembled/qraw, 1..4 use Naive. In matrix mode positive reports distance and negative reports ANI; detail prints both. [1]", ANI_GROUP_FILTER},
+		{"slmetrics", 's', "<+-1..9>", 0, "Metric: Best(1), Recalibrated(2), CtxMoE(3), Naive(4), MashD(5), AafD(6), MashD_if_far(7), AafD_if_far(8), p_dist(9). For unassembled/qraw, 1..4 use Naive. In matrix mode positive reports distance and negative reports ANI; detail prints both. [1]", ANI_GROUP_FILTER},
 		{"unified-metric", ANI_UNIFIED_METRIC, 0, 0, "Expert: in unassembled/qraw mode, honor -s instead of forcing 1..4 to Naive; Best/Recalibrated still fall back when unavailable.", ANI_GROUP_FILTER},
 
 		{0, 0, 0, 0, "Reporting and output:", ANI_GROUP_REPORT},
@@ -261,9 +261,9 @@ static error_t parse_ani(int key, char *arg, struct argp_state *state)
 	}
 	case 's':
 	{
-		ani_opt.s = parse_int_range(state, "-s/--slmetrics", arg, -8, 8);
+		ani_opt.s = parse_int_range(state, "-s/--slmetrics", arg, -9, 9);
 		if (ani_opt.s == 0)
-			argp_error(state, "-s/--slmetrics accepts -8..-1 or 1..8, but not 0");
+			argp_error(state, "-s/--slmetrics accepts -9..-1 or 1..9, but not 0");
 		break;
 	}
 	case 'p':
@@ -537,8 +537,8 @@ static error_t parse_ani(int key, char *arg, struct argp_state *state)
 					argp_usage(state);
 				}
 			}
-		if (ani_opt.s < -8 || ani_opt.s > 8 || ani_opt.s == 0)
-			argp_error(state, "-s option should be within range 1..8 or -8..-1");
+		if (ani_opt.s < -9 || ani_opt.s > 9 || ani_opt.s == 0)
+			argp_error(state, "-s option should be within range 1..9 or -9..-1");
 
 		break;
 		/*

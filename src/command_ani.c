@@ -34,10 +34,10 @@ extern double C9O7_98[6], C9O7_96[6];
 size_t file_size;
 
 const char unified_detail_header[] = "Qry\tRef\tANI\tDistance\tConfidence\tSelected_metric\tXnY_ctx\tQry_align_fraction\tblastn_Qry_align_fraction\tRef_align_fraction\tblastn_Ref_align_fraction\tN_diff_obj\tN_diff_obj_section\tN_mut2_ctx\tRef_annotation";
-#define ANI_SELECTED_METRIC_COUNT 8
+#define ANI_SELECTED_METRIC_COUNT 9
 const char select_metrics_header[ANI_SELECTED_METRIC_COUNT][20] = {
 	"BestDist", "RecalDist", "CtxMoE", "Naive",
-	"MashD", "AafD", "MashD_if_far", "AafD_if_far"
+	"MashD", "AafD", "MashD_if_far", "AafD_if_far", "p_dist"
 };
 
 typedef enum {
@@ -833,6 +833,7 @@ typedef struct {
     double   selected_ani;
     double   moe_dist;
     double   naive_dist;
+    double   p_dist;
     double   mash_dist;
     double   aaf_dist;
     double   calibrated_ani;
@@ -967,6 +968,8 @@ static inline double selected_metric_distance_from_row(const ani_row_t *row, con
 		return row->af_pass ? row->moe_dist : row->mash_dist;
 	case 8:
 		return row->af_pass ? row->moe_dist : row->aaf_dist;
+	case 9:
+		return row->p_dist;
 	default:
 		return row->metric;
 	}
@@ -1005,9 +1008,12 @@ static inline void fill_row_base_distances(ani_row_t *row, const ani_features_t 
 		row->moe_dist = lm3ways_dist_from_features(&tmp);
 		tmp = *features;
 		row->naive_dist = get_naive_dist(&tmp);
+		tmp = *features;
+		row->p_dist = get_p_dist(&tmp);
 	} else {
 		row->moe_dist = ani_opt->e;
 		row->naive_dist = ani_opt->e;
+		row->p_dist = ani_opt->e;
 	}
 	row->mash_dist = get_mashD(Bitslen.ctx / 2, ref_ctx, qry_ctx, features->XnY_ctx);
 	row->aaf_dist = get_aafD(Bitslen.ctx / 2, ref_ctx, qry_ctx, features->XnY_ctx);

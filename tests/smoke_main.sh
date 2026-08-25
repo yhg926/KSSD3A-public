@@ -318,6 +318,9 @@ require_file_contains "$OUT/matrix_edges_and.tsv" "ctx-naive&aaf"
 run "$BIN" matrix --format edges --metric 'ctx-moe|mash' --cut 0.001 --max-afcut 0.8 -o "$OUT/matrix_edges_or.tsv" "$OUT/dedup_src"
 require_line_count "$OUT/matrix_edges_or.tsv" 2
 require_file_contains "$OUT/matrix_edges_or.tsv" "ctx-moe|mash"
+run "$BIN" matrix --format edges --metric p_dist --cut 1 --max-afcut 0 -o "$OUT/matrix_edges_pdist.tsv" "$OUT/dedup_src"
+require_line_count "$OUT/matrix_edges_pdist.tsv" 2
+require_file_contains "$OUT/matrix_edges_pdist.tsv" "p_dist"
 if run "$BIN" matrix --format triangle --metric 'ctx-naive&aaf' -o "$OUT/matrix_bad_combined.tsv" "$OUT/dedup_src" 2> "$OUT/matrix_bad_combined.err"; then
   printf 'smoke: combined matrix metric should require graph format\n' >&2
   exit 1
@@ -463,6 +466,10 @@ require_line_count "$OUT/dedup_and_sketch.sample_names" 2
 require_file_has "$OUT/dedup_and_sketch.sample_names" "$REFS/refA.fna"
 require_file_has "$OUT/dedup_and_sketch.sample_names" "$REFS/refB.fna"
 require_file_lacks "$OUT/dedup_and_sketch.sample_names" "$REFS/refA_frag.fna"
+run "$BIN" sketch --dedup 1 --metric p_dist -o "$OUT/dedup_pdist_sketch" "$OUT/dedup_src"
+run "$BIN" sketch --psmp "$OUT/dedup_pdist_sketch" > "$OUT/dedup_pdist_sketch.names"
+cut -f2- "$OUT/dedup_pdist_sketch.names" > "$OUT/dedup_pdist_sketch.sample_names"
+require_file_has "$OUT/dedup_pdist_sketch.sample_names" "$REFS/refA.fna"
 run "$BIN" sketch --dedup 0.001 --metric ctx-naive --dedup-max-afcut 0.8 --dedup-ctxcut 1 -o "$OUT/dedup_guarded_sketch" "$OUT/dedup_src"
 run "$BIN" sketch --psmp "$OUT/dedup_guarded_sketch" > "$OUT/dedup_guarded_sketch.names"
 cut -f2- "$OUT/dedup_guarded_sketch.names" > "$OUT/dedup_guarded_sketch.sample_names"
@@ -581,6 +588,8 @@ run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq.gz" -f0 -n0 -m0 -
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq.gz" -n0 -m0 -o "$OUT/ani_qraw_default_afcut.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq" -s3 -f0 -n0 -m0 -o "$OUT/ani_qraw_s3_default.tsv"
 awk -F '\t' 'NR > 1 && $6 == "Naive" { found = 1 } END { if (!found) exit 1 }' "$OUT/ani_qraw_s3_default.tsv"
+run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq" -s9 -f0 -n0 -m0 -o "$OUT/ani_qraw_pdist.tsv"
+awk -F '\t' 'NR > 1 && $6 == "p_dist" { found = 1 } END { if (!found) exit 1 }' "$OUT/ani_qraw_pdist.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$REFS/refA.fna" -f0 -n0 -m0 -o "$OUT/ani_qraw_identical.tsv"
 awk -F '\t' 'NR > 1 && $2 ~ /refA\.fna$/ && $4 <= 1e-12 && $6 == "Naive" { found = 1 } END { if (!found) exit 1 }' "$OUT/ani_qraw_identical.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq" -s3 --unified-metric -f0 -n0 -m0 -o "$OUT/ani_qraw_s3_unified.tsv"
@@ -608,6 +617,7 @@ require_nonempty "$OUT/ani_qraw_direct_fastq.tsv"
 require_nonempty "$OUT/ani_qraw_direct_fastq_gz.tsv"
 require_nonempty "$OUT/ani_qraw_default_afcut.tsv"
 require_nonempty "$OUT/ani_qraw_s3_default.tsv"
+require_nonempty "$OUT/ani_qraw_pdist.tsv"
 require_nonempty "$OUT/ani_qraw_s3_unified.tsv"
 require_nonempty "$OUT/ani_qraw_noconflict_sketch.tsv"
 require_nonempty "$OUT/ani_query_direct_fastq_gz_noconflict.tsv"

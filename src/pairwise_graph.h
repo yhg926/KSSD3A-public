@@ -11,8 +11,9 @@ typedef enum pairwise_metric
 {
 	PAIRWISE_METRIC_CTX_MOE = 0,
 	PAIRWISE_METRIC_CTX_NAIVE = 1,
-	PAIRWISE_METRIC_MASH = 2,
-	PAIRWISE_METRIC_AAF = 3
+	PAIRWISE_METRIC_P_DIST = 2,
+	PAIRWISE_METRIC_MASH = 3,
+	PAIRWISE_METRIC_AAF = 4
 } pairwise_metric_t;
 
 typedef enum pairwise_dedup_strategy

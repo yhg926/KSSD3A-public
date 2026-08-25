@@ -372,8 +372,10 @@ Default `ani -m 0` output is a tab-separated detail table. The main columns are 
 `max(Qry_align_fraction, Ref_align_fraction) >= --dedup-max-afcut`, and
 `XnY_ctx >= --dedup-ctxcut`. The default guard is
 `--dedup-max-afcut 0.8 --dedup-ctxcut 0`. The default `--metric ctx-moe` uses
-the context-object MoE/linear-model distance; `ctx-naive`, `mash`, and `aaf`
-are also supported. Quoted combined metrics are supported for graph decisions:
+the context-object MoE/linear-model distance; `ctx-naive`, `p_dist`, `mash`,
+and `aaf` are also supported. `p_dist` is an uncalibrated low-divergence
+point-mutation proxy computed as `N_diff_obj_section / (XnY_ctx * O)`, where
+`O = Bitslen.obj / 2`. Quoted combined metrics are supported for graph decisions:
 `--metric 'ctx-naive&aaf'` requires both distances to pass, while
 `--metric 'ctx-moe|mash'` accepts either distance. If metadata is available,
 duplicate groups prefer valid
@@ -414,8 +416,9 @@ lower-triangle output, `--format edges` writes a sparse TSV of pairs passing
 `--format dedup-plan` write reviewable graph reports without modifying the
 input sketch. `dedup-plan` defaults to `--max-afcut 0.8`, matching
 `sketch --dedup`. The default matrix metric is `ctx-naive`; for LCO sketches,
-`mash` and `aaf` are context-overlap distances using shared context counts, not
-ctx-object exact-overlap counts. Sparse
+`p_dist` is available as an uncalibrated low-divergence point-mutation proxy,
+while `mash` and `aaf` are context-overlap distances using shared context
+counts, not ctx-object exact-overlap counts. Sparse
 matrix graph formats also accept quoted combined metrics: `A&B` requires all
 listed distances to pass `--cut`, and `A|B` accepts the pair if any listed
 distance passes. Dense `full` and `triangle` reports require one metric.

@@ -201,7 +201,7 @@ static sketch_dedup_metric_t parse_sketch_dedup_metric(struct argp_state *state,
   pairwise_metric_expr_t metric = pairwise_metric_expr_single(PAIRWISE_METRIC_CTX_MOE);
   if (pairwise_metric_expr_from_string(arg, &metric))
     return metric;
-  argp_error(state, "--metric must be one metric or an expression like 'ctx-naive&aaf' or 'ctx-moe|mash'");
+  argp_error(state, "--metric must be one metric such as ctx-naive, p_dist, mash, or aaf, or an expression like 'ctx-naive&aaf' or 'ctx-moe|mash'");
   return pairwise_metric_expr_single(PAIRWISE_METRIC_CTX_MOE);
 }
 

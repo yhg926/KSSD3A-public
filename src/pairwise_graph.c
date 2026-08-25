@@ -56,6 +56,8 @@ const char *pairwise_metric_name(pairwise_metric_t metric)
 		return "ctx-moe";
 	case PAIRWISE_METRIC_CTX_NAIVE:
 		return "ctx-naive";
+	case PAIRWISE_METRIC_P_DIST:
+		return "p_dist";
 	case PAIRWISE_METRIC_MASH:
 		return "mash";
 	case PAIRWISE_METRIC_AAF:
@@ -76,6 +78,12 @@ bool pairwise_metric_from_string(const char *arg, pairwise_metric_t *metric_out)
 		*metric_out = PAIRWISE_METRIC_CTX_NAIVE;
 		return true;
 	}
+	if (strcmp(arg, "p_dist") == 0 || strcmp(arg, "pdist") == 0 ||
+		strcmp(arg, "p-distance") == 0 || strcmp(arg, "micro-obj") == 0 ||
+		strcmp(arg, "micro_obj_rate") == 0) {
+		*metric_out = PAIRWISE_METRIC_P_DIST;
+		return true;
+	}
 	if (strcmp(arg, "mash") == 0 || strcmp(arg, "mashd") == 0 ||
 		strcmp(arg, "0") == 0) {
 		*metric_out = PAIRWISE_METRIC_MASH;
@@ -92,7 +100,8 @@ bool pairwise_metric_from_string(const char *arg, pairwise_metric_t *metric_out)
 bool pairwise_metric_is_context(pairwise_metric_t metric)
 {
 	return metric == PAIRWISE_METRIC_CTX_MOE ||
-		   metric == PAIRWISE_METRIC_CTX_NAIVE;
+		   metric == PAIRWISE_METRIC_CTX_NAIVE ||
+		   metric == PAIRWISE_METRIC_P_DIST;
 }
 
 const char *pairwise_dedup_strategy_name(pairwise_dedup_strategy_t strategy)
@@ -340,6 +349,8 @@ pairwise_eval_t pairwise_eval_arrays(pairwise_metric_t metric,
 												  ref_ctx_count, features.XnY_ctx);
 	} else if (metric == PAIRWISE_METRIC_CTX_NAIVE) {
 		eval.distance = pairwise_clean_distance(get_naive_dist(&features));
+	} else if (metric == PAIRWISE_METRIC_P_DIST) {
+		eval.distance = pairwise_clean_distance(get_p_dist(&features));
 	} else {
 		eval.distance = pairwise_clean_distance(lm3ways_dist_from_features(&features));
 	}

@@ -217,6 +217,14 @@ static inline double get_naive_dist(ani_features_t *features)
 	return predict_dist;
 }
 
+static inline double get_p_dist(ani_features_t *features)
+{
+	if (features->XnY_ctx == 0 || Bitslen.obj == 0)
+		return 1;
+	return (double)features->N_diff_obj_section /
+		   ((double)features->XnY_ctx * ((double)Bitslen.obj / 2.0));
+}
+
 // 3. generic distance function from 1. or 2.
 typedef double (*get_generic_dist_from_features_fn)(ani_features_t *features);
 extern get_generic_dist_from_features_fn get_generic_dist_from_features;

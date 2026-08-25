@@ -53,7 +53,7 @@ static struct argp_option opt_matrix[] =
 {
 	{"ref",'r',"<DIR>", 0, "Reference sketches. Omit for triangle mode.",9},
 	{"query",'q',"<DIR>", 0, "Query sketches.",1},
-	{"metric",'m',"<METRIC|EXPR>", 0, "Pairwise metric. Sparse formats also accept quoted A&B or A|B expressions. Numeric 0/1 alias mash/aaf. [ctx-naive]",2},
+	{"metric",'m',"<METRIC|EXPR>", 0, "Pairwise metric: ctx-moe, ctx-naive, p_dist, mash, or aaf. Sparse formats also accept quoted A&B or A|B expressions. Numeric 0/1 alias mash/aaf. [ctx-naive]",2},
 	{"format", MATRIX_KEY_FORMAT, "<FORMAT>", 0, "Report format: full, triangle, edges/sparse, clusters, or dedup-plan. [full for -r/-q; triangle for one sketch]", 2},
 	{"sparse", MATRIX_KEY_SPARSE, 0, 0, "Alias for --format sparse/edges; requires --cut.", 2},
 	{"cut", MATRIX_KEY_CUT, "<FLOAT>", 0, "Distance cutoff for sparse edge, cluster, and dedup-plan reports.", 3},
@@ -235,7 +235,7 @@ static error_t parse_matrix(int key, char* arg, struct argp_state* state) {
 		case 'm':
 		{
 				if (!pairwise_metric_expr_from_string(arg, &matrix_opt.metric))
-					argp_error(state, "-m/--metric must be one metric or an expression like 'ctx-naive&aaf' or 'ctx-moe|mash'");
+					argp_error(state, "-m/--metric must be one metric such as ctx-naive, p_dist, mash, or aaf, or an expression like 'ctx-naive&aaf' or 'ctx-moe|mash'");
 				break;
 		}
     case MATRIX_KEY_FORMAT:

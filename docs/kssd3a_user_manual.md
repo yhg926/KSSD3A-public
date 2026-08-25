@@ -514,6 +514,8 @@ Supported `--metric` values are:
 
 - `ctx-moe`: context-object MoE/linear-model distance. This is the default.
 - `ctx-naive`: context-object naive distance.
+- `p_dist`: uncalibrated low-divergence point-mutation proxy, computed as
+  `N_diff_obj_section / (XnY_ctx * O)`, where `O = Bitslen.obj / 2`.
 - `mash`: Mash-style context-overlap distance for LCO sketches.
 - `aaf`: AAF-style context-overlap distance for LCO sketches.
 
@@ -714,6 +716,7 @@ Select metrics:
 | `6` | AAF distance from shared contexts. |
 | `7` | MashD_if_far: MoE distance when AF passes, otherwise MashD. |
 | `8` | AafD_if_far: MoE distance when AF passes, otherwise AafD. |
+| `9` | `p_dist`: uncalibrated low-divergence point-mutation proxy, `N_diff_obj_section / (XnY_ctx * O)`, where `O = Bitslen.obj / 2`. |
 
 The naive context-object distance is zero-anchored for near-identical pairs.
 Below raw naive distance `0.01`, KSSD3A ramps in the empirical intercept
@@ -722,7 +725,7 @@ raw distance `>=0.01`, the original broad-range calibration is unchanged.
 
 For raw-read/unassembled mode, `-s 1`, `-s 2`, `-s 3`, and `-s 4` all
 report the naive context-object distance by default. Metrics `-s 5` through
-`-s 8` stay available as unified raw distance choices across assembled and
+`-s 9` stay available as unified raw distance choices across assembled and
 unassembled inputs.
 
 Use `--unified-metric` when you intentionally want unassembled/qraw mode to
@@ -918,7 +921,7 @@ kssd3a matrix --format dedup-plan --metric ctx-naive \
   --edge-out dedup_edges.tsv ref_sketches
 ```
 
-Supported `--metric` values are `ctx-moe`, `ctx-naive`, `mash`, and `aaf`.
+Supported `--metric` values are `ctx-moe`, `ctx-naive`, `p_dist`, `mash`, and `aaf`.
 The default is `ctx-naive`. For compatibility, `-m 0` means `mash` and
 `-m 1` means `aaf`. For LCO sketches, `mash` and `aaf` use shared context
 counts, not exact ctx-object overlap counts.

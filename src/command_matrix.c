@@ -386,6 +386,7 @@ static bool matrix_metric_can_use_context_index(const matrix_opt_t *opt)
 		switch (opt->metric.metrics[i]) {
 		case PAIRWISE_METRIC_CTX_NAIVE:
 		case PAIRWISE_METRIC_CTX_MOE:
+		case PAIRWISE_METRIC_P_DIST:
 		case PAIRWISE_METRIC_MASH:
 		case PAIRWISE_METRIC_AAF:
 			break;
@@ -406,6 +407,8 @@ static double matrix_context_metric_distance(pairwise_metric_t metric,
 		return get_naive_dist(features);
 	case PAIRWISE_METRIC_CTX_MOE:
 		return lm3ways_dist_from_features(features);
+	case PAIRWISE_METRIC_P_DIST:
+		return get_p_dist(features);
 	case PAIRWISE_METRIC_MASH:
 		return get_mashD(Bitslen.ctx / 2, ref_ctx, qry_ctx, features->XnY_ctx);
 	case PAIRWISE_METRIC_AAF:
