@@ -581,6 +581,8 @@ run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq.gz" -f0 -n0 -m0 -
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq.gz" -n0 -m0 -o "$OUT/ani_qraw_default_afcut.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq" -s3 -f0 -n0 -m0 -o "$OUT/ani_qraw_s3_default.tsv"
 awk -F '\t' 'NR > 1 && $6 == "Naive" { found = 1 } END { if (!found) exit 1 }' "$OUT/ani_qraw_s3_default.tsv"
+run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$REFS/refA.fna" -f0 -n0 -m0 -o "$OUT/ani_qraw_identical.tsv"
+awk -F '\t' 'NR > 1 && $2 ~ /refA\.fna$/ && $4 <= 1e-12 && $6 == "Naive" { found = 1 } END { if (!found) exit 1 }' "$OUT/ani_qraw_identical.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq" -s3 --unified-metric -f0 -n0 -m0 -o "$OUT/ani_qraw_s3_unified.tsv"
 awk -F '\t' 'NR > 1 && $6 == "CtxMoE" { found = 1 } END { if (!found) exit 1 }' "$OUT/ani_qraw_s3_unified.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$OUT/read_sketch_noconflict" -f0 -n0 -m0 -o "$OUT/ani_qraw_noconflict_sketch.tsv"

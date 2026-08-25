@@ -192,6 +192,7 @@ size_t *kssd_find_first_occurrences_fenceposts(const uint64_t *a, size_t a_size,
 // 2. naive distance: for where 3-way linear model is not applicable e.g. unassembled genomes , or Eukaryotic genomes?
 
 #define DIVIDOR (7)
+#define NAIVE_DIST_INTERCEPT_RAMP_TAU (0.01)
 static inline double get_naive_dist(ani_features_t *features)
 {
 	if (features->XnY_ctx == 0)
@@ -203,10 +204,16 @@ static inline double get_naive_dist(ani_features_t *features)
 		return 0;
 
 #if NUM_CODENS < 11   //9 or 10
-	double predict_dist = final_dist * (0.1557143) + (9.961e-5);  // 0.1557143 ~ 1/7
+	double scale = 0.1557143;  // 0.1557143 ~ 1/7
+	double intercept = 9.961e-5;
 #else 
-	double predict_dist = final_dist * (0.1544286) + (7.133e-4); 
+	double scale = 0.1544286;
+	double intercept = 7.133e-4;
 #endif
+	double intercept_weight = final_dist / NAIVE_DIST_INTERCEPT_RAMP_TAU;
+	if (intercept_weight > 1.0)
+		intercept_weight = 1.0;
+	double predict_dist = final_dist * scale + intercept * intercept_weight;
 	return predict_dist;
 }
 

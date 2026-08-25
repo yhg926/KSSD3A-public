@@ -715,6 +715,11 @@ Select metrics:
 | `7` | MashD_if_far: MoE distance when AF passes, otherwise MashD. |
 | `8` | AafD_if_far: MoE distance when AF passes, otherwise AafD. |
 
+The naive context-object distance is zero-anchored for near-identical pairs.
+Below raw naive distance `0.01`, KSSD3A ramps in the empirical intercept
+linearly; at raw distance `0`, the reported naive distance is also `0`, and at
+raw distance `>=0.01`, the original broad-range calibration is unchanged.
+
 For raw-read/unassembled mode, `-s 1`, `-s 2`, `-s 3`, and `-s 4` all
 report the naive context-object distance by default. Metrics `-s 5` through
 `-s 8` stay available as unified raw distance choices across assembled and

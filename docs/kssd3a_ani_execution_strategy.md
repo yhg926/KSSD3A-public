@@ -197,6 +197,13 @@ alias when the new name is not set. The threshold is independent of
 - is intended for raw reads, metagenomic reads, and other unassembled query
   inputs.
 
+Naive distance is zero-anchored in the low-distance region. KSSD3A first
+computes the raw context-object naive distance and then applies the empirical
+broad-range scale plus an intercept ramp: the intercept weight is
+`min(1, raw_naive / 0.01)`. This avoids an artificial positive distance floor
+for identical or near-identical raw-read comparisons while preserving the
+original calibration once raw naive distance is at least `0.01`.
+
 ## Reference Index Cache Discovery
 
 Benchmark on 2026-06-13 with public_ref and one Salmonella FASTQ-derived query
