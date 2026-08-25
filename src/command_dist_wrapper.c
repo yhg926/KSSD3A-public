@@ -61,8 +61,9 @@ static struct argp_option opt_dist[] =
 
 static char doc_dist[] =
   "\n"
-  "Compute distances or containment metrics between query and reference sketches/sequences."
+  "Legacy cofile-style distance command. For current KSSD3A sketch directories, use `matrix` for distances or `ani` for ANI estimates."
   "\v"
+  "This compatibility command expects older cofiles.stat/mcofiles.stat-style inputs and may not accept sketch directories produced by the current `sketch` command.\n"
   "If -r is omitted, KSSD3 computes pairwise distances among query inputs.\n"
   "\n"
   "Examples:\n"

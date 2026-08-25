@@ -34,6 +34,10 @@ kssd3a set --help
 KSSD3A is an alignment-free framework for nucleotide sequence sketching,
 distance estimation, and ANI estimation.
 
+This public repository is a minimal native CLI distribution. It intentionally
+omits server code, browser/wasm builds, manuscript files, research notebooks,
+and private maintenance scripts.
+
 It is intended to support both assembled and unassembled sequence comparisons:
 
 - assembly-to-assembly;
@@ -71,6 +75,11 @@ For a CPU-specific optimized build:
 make native
 ```
 
+`make native` uses `-march=native` and is meant for the local CPU. Use plain
+`make` when building a binary for unknown machines. On x86_64 systems where
+AVX2 and BMI2 are known to be available, `make avx2` enables those flags
+explicitly.
+
 To check the build/runtime environment:
 
 ```bash
@@ -82,6 +91,8 @@ To run tests:
 ```bash
 make test
 ```
+
+The public test target runs the standalone CLI smoke test suite.
 
 To inspect smoke-test outputs:
 
@@ -119,6 +130,13 @@ sudo make PREFIX=/usr/local install_completion
 | `set` | Run set operations, grouping, and marker database creation. |
 | `examples` | Print common command workflows. |
 | `doctor` | Check build/runtime environment basics. |
+
+Compatibility/advanced subcommands such as `dist`, `shuffle`, and `reverse`
+are retained for older workflows. For new sketches produced by this release,
+use `ani` for ANI estimates and `matrix` for distance matrices, sparse edges,
+clusters, and deduplication plans. The legacy `dist` command expects older
+cofile-style inputs and should not be used as the normal command for current
+KSSD3A sketch directories.
 
 ## 4. Core Concepts
 

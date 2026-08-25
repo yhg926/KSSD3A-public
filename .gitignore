@@ -11,23 +11,5 @@ obj/
 *.swp
 *.swo
 *~
+.DS_Store
 .vscode/
-__pycache__/
-*.pyc
-
-# Ignore generated test outputs, but keep test source files.
-/test/*
-!/test/*.c
-!/test/*.rs
-
-/traning_data/
-
-/bench_runs/
-
-/shuf_files/
-
-/xgboost/
-
-/CODEx_WORKLOG.md
-/setup_kssd3a_server.sh
-/kssd3cli_server.log

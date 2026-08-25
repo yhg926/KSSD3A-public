@@ -2,6 +2,11 @@
 
 KSSD3 is an alignment-free toolkit for fast comparison of genomic sequences. It uses probabilistic sampling of the k-mer space to build compact sketches and compute distances, containment metrics, and ANI estimation.
 
+This public repository is a minimal native CLI distribution. It contains the
+source code and documentation needed to build and run `kssd3a`; it intentionally
+does not include server code, browser/wasm builds, manuscript materials,
+research notebooks, or private maintenance scripts.
+
 ## Building from Source
 
 The repository ships with a Makefile. To build the `kssd3a` binary run:
@@ -17,6 +22,11 @@ For a CPU-specific optimized build on the local machine, run:
 ```bash
 make native
 ```
+
+`make native` uses `-march=native` and should be used only for binaries that
+will run on the same machine or the same CPU family. For explicit x86_64
+AVX2/BMI2 tuning, use `make avx2`. Use plain `make` for the most portable
+local build.
 
 To print the `PATH` line for the local build output, run:
 
@@ -50,7 +60,7 @@ sudo make PREFIX=/usr/local install
 
 ## Testing
 
-Run the Python unit tests and the main CLI smoke tests with:
+Run the standalone CLI smoke tests with:
 
 ```bash
 make test
@@ -73,6 +83,11 @@ Common workflows use these subcommands:
 - `set` – build union, unique-union, grouping, and marker sketches.
 - `examples` – print common command workflows.
 - `doctor` – check basic build/runtime environment details.
+
+Compatibility/advanced subcommands such as `dist`, `shuffle`, and `reverse`
+are retained for older workflows. For new sketches produced by this release,
+use `ani` for ANI estimates and `matrix` for distance matrices, sparse edges,
+clusters, and deduplication plans.
 
 Display help for any subcommand with `--help` or `--usage`.
 

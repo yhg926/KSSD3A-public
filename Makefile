@@ -22,6 +22,9 @@ all: $(TARGET)
 	@echo "Build completed."
 
 native: clean
+	$(MAKE) ARCH_FLAGS="-march=native" all
+
+avx2: clean
 	$(MAKE) ARCH_FLAGS="-march=native -mavx2 -mbmi2" all
 
 SRCS := $(wildcard $(SRCDIR)/*.c)
@@ -84,4 +87,4 @@ test: test-smoke
 
 -include $(DEPS)
 
-.PHONY: all native clean install install_completion uninstall install_env completion test-smoke test
+.PHONY: all native avx2 clean install install_completion uninstall install_env completion test-smoke test

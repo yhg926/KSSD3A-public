@@ -79,7 +79,8 @@ static char doc_global[] =
       "  doctor  \tCheck build/runtime environment basics.\n"
 
 "\n"
-      "Compatibility/advanced subcommands: shuffle, dist, reverse.\n"
+      "Compatibility/advanced subcommands: shuffle, reverse, dist.\n"
+      "  dist is a legacy cofile-style distance command; use matrix or ani for current sketches.\n"
 "\n"
 ;
 

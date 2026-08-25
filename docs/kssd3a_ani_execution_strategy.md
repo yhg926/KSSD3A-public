@@ -1,7 +1,7 @@
 # KSSD3A ANI Execution Strategy
 
-This note records the intended ANI dispatch rules so future changes do not
-accidentally bypass the small-query/ref-stream swap path.
+This note records the intended ANI dispatch rules for the native command-line
+tool, especially the small-query/ref-stream path used for large references.
 
 ## Design Scope
 
@@ -219,40 +219,29 @@ Practical interpretation:
 - Warm sorted index is fastest.
 - Warm streaming is slower but still acceptable and low memory.
 - Cold streaming can beat cold sorted index.
-- Cold sorted index is the bad case for web/large-reference responsiveness.
+- Cold sorted index is the bad case for large-reference responsiveness.
 
 Future adaptive optimization should check page-cache residency of
 `sortedcomb_ctxgid64obj32` with Linux `mincore()` before choosing the sorted
 reference index automatically. Until then, the small unassembled query stream
 rule is the safer default.
 
-Additional browser-detail benchmark on 2026-06-14 with `public_ref` and a
-three-sample browser FASTA sketch (`165 KiB`, 3 query samples, 200,709
-reference samples):
+Additional large-reference benchmark on 2026-06-14 with `public_ref` and a
+three-sample FASTA query sketch (`165 KiB`, 3 query samples, 200,709 reference
+samples):
 
 | Mode | Cache state | Time | Max RSS | Notes |
 | --- | --- | ---: | ---: | --- |
-| Logical web detail path | cold-ish | `2:12` | `176 MB` | Native small-query/ref-stream scan. |
-| Logical web detail path | warm | `28s` | `176 MB` | Same code path after OS page cache warmed. |
+| Native detail path | cold-ish | `2:12` | `176 MB` | Small-query/ref-stream scan. |
+| Native detail path | warm | `28s` | `176 MB` | Same code path after OS page cache warmed. |
 | Forced reference index | cold-ish | `1:33` | `33.3 GB` | Faster here but high memory/page-cache cost. |
-| Old web reverse raw path | cold-ish | `1:11` | `3.0 GB` | Drops calibrated/best output semantics. |
+| Physical reverse raw path | cold-ish | `1:11` | `3.0 GB` | Drops calibrated/best output semantics. |
 
 Interpretation:
 
-- A first browser detail run against the large public reference may be slow if
-  the reference sketch is cold in page cache.
-- Re-enabling web-layer reverse mode is not a clean fix because it conflicts
-  with query-oriented calibrated/best and guard semantics.
-- The repeated-run fix is result caching, not physical argument reversal.
-
-## Web Result Cache
-
-Browser sketch jobs store a result cache under the saved sketch cache. The
-cache key includes the combined sketch digest and ANI options such as output
-format, qraw mode, filters, selected web orientation, and `--unified-metric`.
-
-For multiple saved sketches selected together, the large-reference merges the cached
-sketches into a temporary combined query sketch and computes a combined sketch
-digest. Result-cache lookup and storage must use this combined digest, not only
-the individual saved-sketch digests. Otherwise repeating the same multi-sketch
-analysis recomputes the large reference scan.
+- A first detail run against a large public reference may be slow if the
+  reference sketch is cold in page cache.
+- Physically reversing query/reference arguments is not a clean speed fix
+  because it changes query-oriented calibrated/best and guard semantics.
+- For repeated large-reference analyses, cache or reuse result files at the
+  workflow level instead of reversing the biological query/reference roles.
