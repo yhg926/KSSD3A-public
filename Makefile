@@ -4,7 +4,8 @@ WARNFLAGS ?= -Wno-format-overflow -Wno-unused-result
 OPTFLAGS ?= -O3 -flto
 ARCH_FLAGS ?=
 OMPFLAGS ?= -fopenmp
-CFLAGS ?= $(CSTD) $(WARNFLAGS) $(OPTFLAGS) $(ARCH_FLAGS) $(OMPFLAGS)
+CFLAGS ?= $(CSTD) $(WARNFLAGS) $(OPTFLAGS)
+KSSD_CFLAGS = $(CFLAGS) $(ARCH_FLAGS) $(OMPFLAGS)
 LDFLAGS ?=
 LDLIBS ?= -lz -lm
 
@@ -43,7 +44,7 @@ OBJS := $(GEN_OBJS) $(KLIB_OBJS) $(KLIB_LIB_OBJS)
 DEPS := $(OBJS:.o=.d)
 
 $(TARGET): $(OBJS) | $(BINDIR)
-	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+	$(CC) $(KSSD_CFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
 $(KLIB_OBJS): CFLAGS += -Iklib
 
@@ -51,10 +52,10 @@ $(OBJDIR) $(BINDIR):
 	mkdir -p $@
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
-	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+	$(CC) $(KSSD_CFLAGS) -MMD -MP -c $< -o $@
 
 $(OBJDIR)/%.o: klib/%.c | $(OBJDIR)
-	$(CC) $(CFLAGS) -Iklib -MMD -MP -c $< -o $@
+	$(CC) $(KSSD_CFLAGS) -Iklib -MMD -MP -c $< -o $@
 
 clean:
 	rm -f $(TARGET) $(OBJS) $(DEPS)
