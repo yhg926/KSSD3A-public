@@ -686,8 +686,16 @@ require_nonempty "$OUT/markerdb/comblco"
 require_nonempty "$OUT/markerdb/comblco.index"
 
 run "$BIN" sketch -A -f0 -o "$OUT/qry_abundance" "$QRYS/qryA.fna" "$QRYS/qryMix.fna"
+mkdir -p "$OUT/qry_abundance_noqc"
+cp "$OUT/qry_abundance/lcofiles.stat" "$OUT/qry_abundance_noqc/lcofiles.stat"
+cp "$OUT/qry_abundance/comblco" "$OUT/qry_abundance_noqc/comblco"
+cp "$OUT/qry_abundance/comblco.index" "$OUT/qry_abundance_noqc/comblco.index"
+cp "$OUT/qry_abundance/comblco.a" "$OUT/qry_abundance_noqc/comblco.a"
+cp "$OUT/qry_abundance/lcofiles.infilemeta" "$OUT/qry_abundance_noqc/lcofiles.infilemeta"
+run "$BIN" sketch --sketchQC -o "$OUT/qry_abundance_inferred_qc" "$OUT/qry_abundance_noqc"
 run "$BIN" composite -r "$OUT/markerdb" -q "$OUT/qry_abundance" -o "$OUT/composite_profile.tsv"
 require_nonempty "$OUT/qry_abundance/comblco.a"
+require_nonempty "$OUT/qry_abundance_inferred_qc/lcofiles.qc"
 require_nonempty "$OUT/composite_profile.tsv"
 
 printf 'smoke: all main CLI checks passed\n' >&2

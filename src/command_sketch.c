@@ -3097,9 +3097,7 @@ int sketch_qc_comblco(sketch_opt_t *sketch_opt_val)
     if (!in_sketch->stats.lco_stat_val.koc || !in_sketch->abundance)
         err(EINVAL, "%s(): --sketchQC requires an abundance sketch with %s",
             __func__, combined_ab_suffix);
-    if (!in_sketch->sample_qc)
-        err(EINVAL, "%s(): --sketchQC requires %s in input sketch directory",
-            __func__, sketch_qc_stat);
+    const bool infer_missing_qc = in_sketch->sample_qc == NULL;
 
     mkdir_p(sketch_opt_val->outdir);
 
@@ -3150,7 +3148,18 @@ int sketch_qc_comblco(sketch_opt_t *sketch_opt_val)
     for (int sample = 0; sample < nfiles; ++sample) {
         const uint64_t start = in_sketch->sketch_index[sample];
         const uint64_t end = in_sketch->sketch_index[sample + 1];
-        const dim_sketch_qc_stat_t qc = in_sketch->sample_qc[sample];
+        dim_sketch_qc_stat_t qc = {0};
+        if (infer_missing_qc) {
+            SortedKV_Arrays_t sample_kv = {
+                .keys = in_sketch->comb_sketch + start,
+                .values = in_sketch->abundance + start,
+                .len = end - start,
+            };
+            const reads_qc_range_t range = infer_reads_qc_count_range(&sample_kv, 2u);
+            qc = sample_qc_from_range(&range, false);
+        } else {
+            qc = in_sketch->sample_qc[sample];
+        }
         const bool valid_range = (qc.flags & DIM_SKETCH_QC_RANGE_VALID) != 0;
         out_qc[sample] = qc;
         if (valid_range)
