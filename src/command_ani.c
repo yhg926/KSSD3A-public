@@ -894,6 +894,16 @@ static inline const char *coverage_estimator_label(const ani_row_t *r)
 	return "reported_unique_ctxobj_sum";
 }
 
+static inline void append_coverage_double(kstring_t *ks_out, double value)
+{
+	if (!isfinite(value))
+		ksprintf(ks_out, "NA");
+	else if (fabs(value) >= 1000.0)
+		ksprintf(ks_out, "%.3f", value);
+	else
+		ksprintf(ks_out, "%.6g", value);
+}
+
 static inline void fill_row_calibration(ani_row_t *r, bool unassembled,
                                         bool enable_best_guard,
                                         const infile_meta_t *qry_asm,
@@ -1110,18 +1120,26 @@ static inline void append_unified_detail_row(kstring_t *ks_out,
         if (ks_out->l > 0 && ks_out->s[ks_out->l - 1] == '\n')
             ks_out->l--;
         if (r->coverage_status == 1) {
-            ksprintf(ks_out, "\t%s\t%u\t%u\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\treported_rows\n",
+            ksprintf(ks_out, "\t%s\t%u\t%u\t",
                      coverage_estimator_label(r),
                      r->coverage_ref_markers,
-                     r->coverage_observed_markers,
-                     r->coverage_observed_fraction,
-                     r->coverage_count_sum,
-                     r->estimated_depth,
-                     r->positive_mean_depth,
-                     r->positive_median_depth,
-                     r->count_cv,
-                     r->estimated_abundance_mass,
-                     r->estimated_abundance_fraction);
+                     r->coverage_observed_markers);
+            append_coverage_double(ks_out, r->coverage_observed_fraction);
+            ksprintf(ks_out, "\t");
+            append_coverage_double(ks_out, r->coverage_count_sum);
+            ksprintf(ks_out, "\t");
+            append_coverage_double(ks_out, r->estimated_depth);
+            ksprintf(ks_out, "\t");
+            append_coverage_double(ks_out, r->positive_mean_depth);
+            ksprintf(ks_out, "\t");
+            append_coverage_double(ks_out, r->positive_median_depth);
+            ksprintf(ks_out, "\t");
+            append_coverage_double(ks_out, r->count_cv);
+            ksprintf(ks_out, "\t");
+            append_coverage_double(ks_out, r->estimated_abundance_mass);
+            ksprintf(ks_out, "\t");
+            append_coverage_double(ks_out, r->estimated_abundance_fraction);
+            ksprintf(ks_out, "\treported_rows\n");
         } else {
             ksprintf(ks_out, "\t%s\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\n",
                      coverage_estimator_label(r));
