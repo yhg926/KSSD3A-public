@@ -36,6 +36,7 @@ const char combined_sketch_suffix[] = "comblco";
 const char idx_sketch_suffix[] = "comblco.index";
 const char combined_ab_suffix[] = "comblco.a";
 const char sorted_comb_ctxgid64obj32[] = "sortedcomb_ctxgid64obj32";
+const char combined_unique_bits_suffix[] = "sortedcomb_ctxgid64obj32.unique_bits";
 // public vars shared across files
 uint32_t FILTER, hash_id;
 dim_sketch_stat_t comblco_stat_one, comblco_stat_it;
@@ -832,6 +833,86 @@ void combine_lco(sketch_opt_t *sketch_opt_val, infile_tab_t *infile_stat)
         fclose(comb_ab_fp);
 }
 
+typedef struct {
+    uint32_t obj;
+    uint64_t pos;
+} unique_marker_tmp_t;
+
+static int unique_marker_tmp_cmp(const void *pa, const void *pb)
+{
+    const unique_marker_tmp_t *a = (const unique_marker_tmp_t *)pa;
+    const unique_marker_tmp_t *b = (const unique_marker_tmp_t *)pb;
+    if (a->obj != b->obj)
+        return (a->obj > b->obj) - (a->obj < b->obj);
+    return (a->pos > b->pos) - (a->pos < b->pos);
+}
+
+static inline void unique_bitset_set(uint8_t *bits, uint64_t idx)
+{
+    bits[idx >> 3] |= (uint8_t)(1u << (idx & 7u));
+}
+
+static void write_unique_marker_bits_from_sorted(const char *refdir,
+                                                 const ctxgidobj_t *sorted,
+                                                 uint32_t infile_num,
+                                                 uint64_t sketch_size)
+{
+    if (infile_num >= (1u << GID_NBITS))
+        errx(EXIT_FAILURE, "%s(): genome number %u exceeds maximum %u",
+             __func__, infile_num, 1u << GID_NBITS);
+
+    const size_t bit_bytes = (size_t)((sketch_size + 7u) >> 3);
+    uint8_t *bits = bit_bytes ? calloc(bit_bytes, 1) : NULL;
+    if (bit_bytes && !bits)
+        err(EXIT_FAILURE, "%s(): OOM unique-marker bitset", __func__);
+
+    unique_marker_tmp_t *tmp = NULL;
+    size_t tmp_cap = 0;
+    uint64_t unique_markers = 0;
+
+    for (uint64_t i = 0; i < sketch_size; ) {
+        const uint64_t ctx = sorted[i].ctxgid >> GID_NBITS;
+        uint64_t j = i + 1;
+        while (j < sketch_size && (sorted[j].ctxgid >> GID_NBITS) == ctx)
+            ++j;
+        const size_t n = (size_t)(j - i);
+        if (n > tmp_cap) {
+            unique_marker_tmp_t *new_tmp = realloc(tmp, n * sizeof(*tmp));
+            if (!new_tmp)
+                err(EXIT_FAILURE, "%s(): OOM unique-marker context group", __func__);
+            tmp = new_tmp;
+            tmp_cap = n;
+        }
+        for (size_t k = 0; k < n; ++k) {
+            tmp[k].obj = sorted[i + k].obj;
+            tmp[k].pos = i + (uint64_t)k;
+        }
+        qsort(tmp, n, sizeof(*tmp), unique_marker_tmp_cmp);
+
+        for (size_t k = 0; k < n; ) {
+            size_t e = k + 1;
+            while (e < n && tmp[e].obj == tmp[k].obj)
+                ++e;
+            if (e - k == 1) {
+                unique_bitset_set(bits, tmp[k].pos);
+                ++unique_markers;
+            }
+            k = e;
+        }
+        i = j;
+    }
+
+    char *bits_path = format_string("%s/%s", refdir, combined_unique_bits_suffix);
+    if (!bits_path)
+        err(EXIT_FAILURE, "%s(): OOM unique-marker bitset path", __func__);
+    write_to_file(bits_path, bits, bit_bytes);
+    fprintf(stderr, "sketch unique-index: wrote %s (%zu bytes; %" PRIu64 " unique markers / %" PRIu64 " records)\n",
+            bits_path, bit_bytes, unique_markers, sketch_size);
+    free(bits_path);
+    free(tmp);
+    free(bits);
+}
+
 void gen_inverted_index4comblco(const char *refdir)
 {
 
@@ -846,11 +927,56 @@ void gen_inverted_index4comblco(const char *refdir)
     if (GID_NBITS + 4 * hclen > 64)
         err(EXIT_FAILURE, "%s(): context_bits_len(%d)+gid_bits_len(%d) exceed 64", __func__, 4 * hclen, GID_NBITS);
     ctxgidobj_t *ctxgidobj = ctxobj64_2ctxgidobj(ref_result->sketch_index, ref_result->comb_sketch, ref_result->infile_num, sketch_size);
-    free_unify_sketch(ref_result);
     ctxgidobj_sort_array(ctxgidobj, sketch_size);
     // printf("sketch_size=%lu\t%d\t%d\n",sizeof(ctxgidobj[0]),sizeof(ctxgidobj_t),sketch_size);
     write_to_file(format_string("%s/%s", refdir, sorted_comb_ctxgid64obj32), ctxgidobj, sizeof(ctxgidobj[0]) * sketch_size);
+    write_unique_marker_bits_from_sorted(refdir, ctxgidobj,
+                                         (uint32_t)ref_result->infile_num,
+                                         sketch_size);
+    free_unify_sketch(ref_result);
     free(ctxgidobj);
+}
+
+void gen_unique_marker_index4comblco(const char *refdir)
+{
+    unify_sketch_t *ref_result = generic_sketch_parse(refdir, SKETCH_PARSE_NONE);
+    const_comask_init(&ref_result->stats.lco_stat_val);
+    const uint64_t sketch_size = ref_result->sketch_index[ref_result->infile_num];
+
+    ctxgidobj_t *ctxgidobj = NULL;
+    size_t sorted_size = 0;
+    bool sorted_from_file = false;
+    if (file_exists_in_folder(refdir, sorted_comb_ctxgid64obj32)) {
+        char *sorted_path = test_get_fullpath(refdir, sorted_comb_ctxgid64obj32);
+        ctxgidobj = read_from_file(sorted_path, &sorted_size);
+        free(sorted_path);
+        if (sorted_size != (size_t)sketch_size * sizeof(ctxgidobj[0]))
+            errx(EXIT_FAILURE, "%s(): %s/%s has %zu bytes, expected %zu",
+                 __func__, refdir, sorted_comb_ctxgid64obj32, sorted_size,
+                 (size_t)sketch_size * sizeof(ctxgidobj[0]));
+        sorted_from_file = true;
+    } else {
+        if (sketch_size >= UINT32_MAX)
+            err(EXIT_FAILURE, "%s():sketch_index maximun %lu exceed UINT32_MAX %u", __func__, sketch_size, UINT32_MAX);
+        if (ref_result->infile_num >= (1 << GID_NBITS))
+            err(EXIT_FAILURE, "%s(): genome numer %d exceed maximum:%u", __func__, ref_result->infile_num, 1 << GID_NBITS);
+        if (GID_NBITS + 4 * hclen > 64)
+            err(EXIT_FAILURE, "%s(): context_bits_len(%d)+gid_bits_len(%d) exceed 64", __func__, 4 * hclen, GID_NBITS);
+        ctxgidobj = ctxobj64_2ctxgidobj(ref_result->sketch_index, ref_result->comb_sketch,
+                                        ref_result->infile_num, sketch_size);
+        ctxgidobj_sort_array(ctxgidobj, sketch_size);
+        write_to_file(format_string("%s/%s", refdir, sorted_comb_ctxgid64obj32),
+                      ctxgidobj, sizeof(ctxgidobj[0]) * sketch_size);
+    }
+
+    write_unique_marker_bits_from_sorted(refdir, ctxgidobj,
+                                         (uint32_t)ref_result->infile_num,
+                                         sketch_size);
+    if (sorted_from_file)
+        free_read_from_file(ctxgidobj, sorted_size);
+    else
+        free(ctxgidobj);
+    free_unify_sketch(ref_result);
 }
 
 static void write_sketch_input_annotations(const char *outdir, infile_tab_t *infile_stat);
@@ -2269,6 +2395,10 @@ static void remove_replace_tmp(const char *tmp_path, const char *target_dir,
 static void remove_stale_sorted_index(const char *target_dir)
 {
     char *path = append_join_path(target_dir, sorted_comb_ctxgid64obj32);
+    if (unlink(path) != 0 && errno != ENOENT)
+        err(errno, "%s(): cannot remove stale %s", __func__, path);
+    free(path);
+    path = append_join_path(target_dir, combined_unique_bits_suffix);
     if (unlink(path) != 0 && errno != ENOENT)
         err(errno, "%s(): cannot remove stale %s", __func__, path);
     free(path);

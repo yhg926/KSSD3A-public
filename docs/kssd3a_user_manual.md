@@ -154,6 +154,7 @@ files include:
 | `lcofiles.anno` | Optional per-sample annotations from FASTA/FASTQ headers. |
 | `comblco.position` | Optional per-entry sequence positions from `--position`. |
 | `sortedcomb_ctxgid64obj32` | Optional sorted reference inverted index. |
+| `sortedcomb_ctxgid64obj32.unique_bits` | Optional one-bit-per-sorted-index-record marker sidecar for fast qraw coverage estimation. |
 
 Sketches compared against each other should use compatible sketch parameters,
 especially the same `--DimRdcFold` and context/object layout.
@@ -600,14 +601,17 @@ native coverage/depth estimates:
 
 ```bash
 kssd3a sketch --conflict -A -f8 -p8 -o read_qry_sketches reads/*.fastq.gz
+kssd3a sketch --unique-index ref_sketches
 kssd3a ani -r ref_sketches --qraw read_qry_sketches \
   --estimate-coverage -m0 -f0.2 -n0.9 -p8 -o reads_to_assembly.coverage.tsv
 ```
 
 `--estimate-coverage` requires `--qraw` and detail output (`-m0`). It uses the
-query `comblco.a` counts and exact context-object markers that are unique among
-the reported reference rows to append coverage/depth and relative abundance
-columns. If the query sketch lacks `comblco.a`, the added columns report
+query `comblco.a` counts. When the reference sketch has `sortedcomb_ctxgid64obj32.unique_bits`
+built by `kssd3a sketch -i` or `kssd3a sketch --unique-index`, coverage uses
+exact context-object markers unique across the full reference sketch. Without
+that sidecar, it falls back to exact markers unique only among the reported
+reference rows. If the query sketch lacks `comblco.a`, the added columns report
 `NA:query_missing_comblco.a`.
 
 ### 6.3 Assembly-To-Reads

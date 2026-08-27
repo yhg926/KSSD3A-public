@@ -290,6 +290,7 @@ run "$BIN" sketch --position --conflict -f0 -p4 -o "$OUT/pos_sketch_one" "$READS
 run "$BIN" sketch -i "$OUT/ref_sketch"
 require_nonempty "$OUT/ref_sketch/lcofiles.stat"
 require_nonempty "$OUT/ref_sketch/sortedcomb_ctxgid64obj32"
+require_nonempty "$OUT/ref_sketch/sortedcomb_ctxgid64obj32.unique_bits"
 run "$BIN" set -P "$OUT/ref_sketch" > "$OUT/ref_sketch.set_psmp"
 run "$BIN" sketch --psmp "$OUT/ref_sketch" > "$OUT/ref_sketch.sketch_psmp"
 require_same_file "$OUT/ref_sketch.set_psmp" "$OUT/ref_sketch.sketch_psmp"
@@ -317,6 +318,10 @@ if [ -e "$OUT/remove_sketch/sortedcomb_ctxgid64obj32" ]; then
   printf 'smoke: --remove should delete stale sortedcomb_ctxgid64obj32\n' >&2
   exit 1
 fi
+if [ -e "$OUT/remove_sketch/sortedcomb_ctxgid64obj32.unique_bits" ]; then
+  printf 'smoke: --remove should delete stale sortedcomb_ctxgid64obj32.unique_bits\n' >&2
+  exit 1
+fi
 cp -a "$OUT/ref_sketch" "$OUT/keep_sketch"
 printf '%s\n' "$REFS/refA.fna" > "$OUT/keep_names.txt"
 run "$BIN" sketch --keep "$OUT/keep_names.txt" -o "$OUT/keep_copy_sketch" "$OUT/ref_sketch"
@@ -334,6 +339,10 @@ require_file_has "$OUT/keep_sketch.sample_names" "$REFS/refB.fna"
 require_file_lacks "$OUT/keep_sketch.sample_names" "$REFS/refA.fna"
 if [ -e "$OUT/keep_sketch/sortedcomb_ctxgid64obj32" ]; then
   printf 'smoke: --keep should delete stale sortedcomb_ctxgid64obj32\n' >&2
+  exit 1
+fi
+if [ -e "$OUT/keep_sketch/sortedcomb_ctxgid64obj32.unique_bits" ]; then
+  printf 'smoke: --keep should delete stale sortedcomb_ctxgid64obj32.unique_bits\n' >&2
   exit 1
 fi
 run "$BIN" sketch -f0 -p2 -o "$OUT/dedup_src" "$REFS/refA_frag.fna" "$REFS/refA.fna" "$REFS/refB.fna"
@@ -530,6 +539,10 @@ if [ -e "$OUT/dedup_inplace/sortedcomb_ctxgid64obj32" ]; then
   printf 'smoke: --dedup should delete stale sortedcomb_ctxgid64obj32\n' >&2
   exit 1
 fi
+if [ -e "$OUT/dedup_inplace/sortedcomb_ctxgid64obj32.unique_bits" ]; then
+  printf 'smoke: --dedup should delete stale sortedcomb_ctxgid64obj32.unique_bits\n' >&2
+  exit 1
+fi
 run "$BIN" sketch --dedup 0.001 --metric ctx-naive -f0 -p2 -o "$OUT/dedup_raw_build" "$REFS/refA_frag.fna" "$REFS/refA.fna" "$REFS/refB.fna"
 run "$BIN" sketch --psmp "$OUT/dedup_raw_build" > "$OUT/dedup_raw_build.names"
 cut -f2- "$OUT/dedup_raw_build.names" > "$OUT/dedup_raw_build.sample_names"
@@ -571,6 +584,10 @@ require_file_has "$OUT/append_sketch.sample_names" "$REFS/refA.fna"
 require_file_has "$OUT/append_sketch.sample_names" "$QRYS/qryA.fna"
 if [ -e "$OUT/append_sketch/sortedcomb_ctxgid64obj32" ]; then
   printf 'smoke: --append should delete stale sortedcomb_ctxgid64obj32\n' >&2
+  exit 1
+fi
+if [ -e "$OUT/append_sketch/sortedcomb_ctxgid64obj32.unique_bits" ]; then
+  printf 'smoke: --append should delete stale sortedcomb_ctxgid64obj32.unique_bits\n' >&2
   exit 1
 fi
 require_nonempty "$OUT/pos_sketch_many/comblco.position"
@@ -615,6 +632,7 @@ run "$BIN" ani -r "$OUT/ref_sketch" -q "$OUT/read_sketch" -f0 -n0 -m0 -o "$OUT/a
 run "$BIN" ani -r "$OUT/ref_sketch" -q "$OUT/read_sketch_noconflict" -f0 -n0 -m0 -o "$OUT/ani_query_noconflict_sketch.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$OUT/read_sketch" -f0 -n0 -m0 -o "$OUT/ani_qraw.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$OUT/read_sketch_abundance" -f0 -n0 -m0 --estimate-coverage -o "$OUT/ani_qraw_estcov.tsv"
+awk -F '\t' 'NR > 1 && $16 == "refdb_unique_ctxobj_bitset" { found = 1 } END { if (!found) exit 1 }' "$OUT/ani_qraw_estcov.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$OUT/read_sketch" -f0 -n0 -m0 --estimate-coverage -o "$OUT/ani_qraw_estcov_noabundance.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq" -f0 -n0 -m0 -o "$OUT/ani_qraw_direct_fastq.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq.gz" -f0 -n0 -m0 -o "$OUT/ani_qraw_direct_fastq_gz.tsv"
@@ -672,7 +690,7 @@ require_header_has "$OUT/ani_auto_stdin.tsv" Selected_metric
 require_header_has "$OUT/ani_auto_pipecmd.tsv" Selected_metric
 require_header_has "$OUT/ani_qraw_estcov.tsv" Estimated_depth
 require_header_has "$OUT/ani_qraw_estcov.tsv" Estimated_abundance_fraction
-require_file_contains "$OUT/ani_qraw_estcov.tsv" "reported_unique_ctxobj_sum"
+require_file_contains "$OUT/ani_qraw_estcov.tsv" "refdb_unique_ctxobj_bitset"
 require_file_contains "$OUT/ani_qraw_estcov_noabundance.tsv" "NA:query_missing_comblco.a"
 for ani_tsv in \
   "$OUT/ani_detail.tsv" \

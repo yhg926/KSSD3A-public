@@ -30,6 +30,7 @@
 // pulic vars
 const char gid_obj_prefix[] = "gidobj", ctx_idx_prefix[] = "ctx.index";
 extern const char sorted_comb_ctxgid64obj32[];
+extern const char combined_unique_bits_suffix[];
 extern double C9O7_98[6], C9O7_96[6];
 size_t file_size;
 
@@ -891,6 +892,8 @@ static inline const char *coverage_estimator_label(const ani_row_t *r)
 		return "NA:query_missing_comblco.a";
 	if (r->coverage_status == 3)
 		return "NA:ref_read_error";
+	if (r->coverage_status == 4)
+		return "refdb_unique_ctxobj_bitset";
 	return "reported_unique_ctxobj_sum";
 }
 
@@ -1119,7 +1122,7 @@ static inline void append_unified_detail_row(kstring_t *ks_out,
     if (ani_opt && ani_opt->estimate_coverage) {
         if (ks_out->l > 0 && ks_out->s[ks_out->l - 1] == '\n')
             ks_out->l--;
-        if (r->coverage_status == 1) {
+        if (r->coverage_status == 1 || r->coverage_status == 4) {
             ksprintf(ks_out, "\t%s\t%u\t%u\t",
                      coverage_estimator_label(r),
                      r->coverage_ref_markers,
@@ -1139,7 +1142,7 @@ static inline void append_unified_detail_row(kstring_t *ks_out,
             append_coverage_double(ks_out, r->estimated_abundance_mass);
             ksprintf(ks_out, "\t");
             append_coverage_double(ks_out, r->estimated_abundance_fraction);
-            ksprintf(ks_out, "\treported_rows\n");
+            ksprintf(ks_out, "\t%s\n", r->coverage_status == 4 ? "refdb" : "reported_rows");
         } else {
             ksprintf(ks_out, "\t%s\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\n",
                      coverage_estimator_label(r));
@@ -1913,9 +1916,99 @@ static int compute_streamed_ref_row_one_qry(
 
 typedef struct {
     uint32_t rn;
+    uint64_t begin;
     uint64_t *keys;
     size_t n;
 } coverage_ref_slice_t;
+
+typedef struct {
+    uint8_t *bits;
+    size_t bytes;
+    uint64_t entries;
+    ctxgidobj_t *sorted;
+    size_t sorted_bytes;
+    bool sorted_is_mmap;
+    bool available;
+} coverage_unique_bits_t;
+
+static inline bool coverage_unique_bitset_get(const coverage_unique_bits_t *idx, uint64_t pos)
+{
+    return idx && idx->available && pos < idx->entries &&
+           (idx->bits[pos >> 3] & (uint8_t)(1u << (pos & 7u))) != 0;
+}
+
+static coverage_unique_bits_t load_coverage_unique_bits(const char *refdir, uint64_t ref_entries)
+{
+    coverage_unique_bits_t idx;
+    memset(&idx, 0, sizeof(idx));
+    idx.entries = ref_entries;
+    if (!refdir || !file_exists_in_folder(refdir, combined_unique_bits_suffix))
+        return idx;
+    if (!file_exists_in_folder(refdir, sorted_comb_ctxgid64obj32)) {
+        warnx("%s(): ignoring %s/%s because %s is missing",
+              __func__, refdir, combined_unique_bits_suffix, sorted_comb_ctxgid64obj32);
+        return idx;
+    }
+
+    char *path = test_get_fullpath(refdir, combined_unique_bits_suffix);
+    idx.bits = read_from_file(path, &idx.bytes);
+    free(path);
+    const size_t expected = (size_t)((ref_entries + 7u) >> 3);
+    if (idx.bytes != expected) {
+        warnx("%s(): ignoring %s/%s: %zu bytes, expected %zu",
+              __func__, refdir, combined_unique_bits_suffix, idx.bytes, expected);
+        free_read_from_file(idx.bits, idx.bytes);
+        memset(&idx, 0, sizeof(idx));
+        idx.entries = ref_entries;
+        return idx;
+    }
+
+    path = test_get_fullpath(refdir, sorted_comb_ctxgid64obj32);
+    idx.sorted = read_reference_sorted_index(path, &idx.sorted_bytes, &idx.sorted_is_mmap);
+    free(path);
+    if (idx.sorted_bytes != (size_t)ref_entries * sizeof(idx.sorted[0])) {
+        warnx("%s(): ignoring %s/%s: %zu bytes, expected %zu",
+              __func__, refdir, sorted_comb_ctxgid64obj32, idx.sorted_bytes,
+              (size_t)ref_entries * sizeof(idx.sorted[0]));
+        free_reference_sorted_index(idx.sorted, idx.sorted_bytes, idx.sorted_is_mmap);
+        free_read_from_file(idx.bits, idx.bytes);
+        memset(&idx, 0, sizeof(idx));
+        idx.entries = ref_entries;
+        return idx;
+    }
+    idx.available = true;
+    return idx;
+}
+
+static void free_coverage_unique_bits(coverage_unique_bits_t *idx)
+{
+    if (!idx || !idx->bits)
+        return;
+    free_read_from_file(idx->bits, idx->bytes);
+    if (idx->sorted)
+        free_reference_sorted_index(idx->sorted, idx->sorted_bytes, idx->sorted_is_mmap);
+    memset(idx, 0, sizeof(*idx));
+}
+
+static bool coverage_unique_bitset_get_key(const coverage_unique_bits_t *idx,
+                                           uint64_t ctxgid, uint32_t obj)
+{
+    if (!idx || !idx->available || !idx->sorted)
+        return false;
+    uint64_t lo = 0, hi = idx->entries;
+    while (lo < hi) {
+        const uint64_t mid = lo + ((hi - lo) >> 1);
+        const ctxgidobj_t *v = &idx->sorted[mid];
+        if (v->ctxgid < ctxgid || (v->ctxgid == ctxgid && v->obj < obj))
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < idx->entries &&
+           idx->sorted[lo].ctxgid == ctxgid &&
+           idx->sorted[lo].obj == obj &&
+           coverage_unique_bitset_get(idx, lo);
+}
 
 static size_t lower_bound_u64_local(const uint64_t *arr, size_t n, uint64_t value)
 {
@@ -1956,6 +2049,7 @@ static void populate_selected_coverage_for_query(
     uint32_t qid,
     FILE *ref_fp,
     const uint64_t *ref_idx,
+    const coverage_unique_bits_t *ref_unique_bits,
     ani_row_t *rows,
     size_t n_rows)
 {
@@ -1972,6 +2066,7 @@ static void populate_selected_coverage_for_query(
     if (!slices)
         err(EXIT_FAILURE, "%s(): OOM coverage ref slices", __func__);
 
+    const bool use_refdb_unique_bits = ref_unique_bits && ref_unique_bits->available;
     size_t total_keys = 0;
     for (size_t i = 0; i < n_rows; ++i) {
         const uint32_t rn = rows[i].rn;
@@ -1981,8 +2076,10 @@ static void populate_selected_coverage_for_query(
             errx(EXIT_FAILURE, "%s(): invalid reference index for genome %u", __func__, rn);
         const size_t len = (size_t)(end - begin);
         slices[i].rn = rn;
+        slices[i].begin = begin;
         slices[i].n = len;
-        total_keys += len;
+        if (!use_refdb_unique_bits)
+            total_keys += len;
         if (len == 0)
             continue;
         slices[i].keys = malloc(len * sizeof(slices[i].keys[0]));
@@ -1996,24 +2093,29 @@ static void populate_selected_coverage_for_query(
                  __func__, got, len);
     }
 
-    uint64_t *all_keys = total_keys ? malloc(total_keys * sizeof(all_keys[0])) : NULL;
-    if (total_keys && !all_keys)
-        err(EXIT_FAILURE, "%s(): OOM coverage key pool", __func__);
-    size_t out = 0;
-    for (size_t i = 0; i < n_rows; ++i) {
-        if (slices[i].n) {
-            memcpy(all_keys + out, slices[i].keys, slices[i].n * sizeof(all_keys[0]));
-            out += slices[i].n;
+    uint64_t *all_keys = NULL;
+    if (!use_refdb_unique_bits) {
+        all_keys = total_keys ? malloc(total_keys * sizeof(all_keys[0])) : NULL;
+        if (total_keys && !all_keys)
+            err(EXIT_FAILURE, "%s(): OOM coverage key pool", __func__);
+        size_t out = 0;
+        for (size_t i = 0; i < n_rows; ++i) {
+            if (slices[i].n) {
+                memcpy(all_keys + out, slices[i].keys, slices[i].n * sizeof(all_keys[0]));
+                out += slices[i].n;
+            }
         }
+        if (total_keys)
+            qsort(all_keys, total_keys, sizeof(all_keys[0]), qsort_comparator_uint64);
     }
-    if (total_keys)
-        qsort(all_keys, total_keys, sizeof(all_keys[0]), qsort_comparator_uint64);
 
     const size_t q_begin = (size_t)qry->sketch_index[qid];
     const size_t q_end = (size_t)qry->sketch_index[qid + 1];
     const uint64_t *q_keys = qry->comb_sketch + q_begin;
     const uint32_t *q_counts = qry->abundance + q_begin;
     const size_t q_n = q_end - q_begin;
+    const uint8_t nobjbits = Bitslen.obj;
+    const uint64_t objmask = (nobjbits == 64) ? UINT64_MAX : ((1ULL << nobjbits) - 1ULL);
 
     double total_mass = 0.0;
     for (size_t i = 0; i < n_rows; ++i) {
@@ -2028,9 +2130,17 @@ static void populate_selected_coverage_for_query(
 
         for (size_t k = 0; k < slices[i].n; ++k) {
             const uint64_t key = slices[i].keys[k];
-            const size_t lo = lower_bound_u64_local(all_keys, total_keys, key);
-            const size_t hi = upper_bound_u64_local(all_keys, total_keys, key);
-            if (hi - lo != 1)
+            bool is_marker = false;
+            if (use_refdb_unique_bits) {
+                const uint64_t ctx = (nobjbits == 64) ? 0 : (key >> nobjbits);
+                const uint64_t ctxgid = (ctx << GID_NBITS) | (uint64_t)row->rn;
+                is_marker = coverage_unique_bitset_get_key(ref_unique_bits, ctxgid, (uint32_t)(key & objmask));
+            } else {
+                const size_t lo = lower_bound_u64_local(all_keys, total_keys, key);
+                const size_t hi = upper_bound_u64_local(all_keys, total_keys, key);
+                is_marker = (hi - lo == 1);
+            }
+            if (!is_marker)
                 continue;
             markers++;
             const size_t qi = lower_bound_u64_local(q_keys, q_n, key);
@@ -2042,7 +2152,7 @@ static void populate_selected_coverage_for_query(
             }
         }
 
-        row->coverage_status = 1;
+        row->coverage_status = use_refdb_unique_bits ? 4 : 1;
         row->coverage_ref_markers = markers;
         row->coverage_observed_markers = observed;
         row->coverage_observed_fraction = markers ? (double)observed / (double)markers : 0.0;
@@ -2107,6 +2217,8 @@ int stream_ref_sketches_one_qraw_lookup(ani_opt_t *ani_opt)
         errx(EXIT_FAILURE, "%s(): %s/%s has %zu bytes, expected %zu",
              __func__, ani_opt->refdir, idx_sketch_suffix, ref_idx_size,
              ((size_t)ref_n + 1) * sizeof(ref_idx[0]));
+    coverage_unique_bits_t ref_unique_bits =
+        load_coverage_unique_bits(ani_opt->refdir, ref_idx[ref_n]);
 
     char (*refanno)[PATHLEN] = read_optional_sketch_annotations(ani_opt->refdir, (int)ref_n);
     infile_meta_t *ref_infile_meta =
@@ -2229,6 +2341,7 @@ int stream_ref_sketches_one_qraw_lookup(ani_opt_t *ani_opt)
         out_n = (size_t)ani_opt->ntop;
     if (out_n > 0)
         populate_selected_coverage_for_query(ani_opt, qry, 0, ref_fp, ref_idx,
+                                             &ref_unique_bits,
                                              &kv_A(survivors, 0), out_n);
     for (size_t i = 0; i < out_n; ++i) {
         const ani_row_t *r = &kv_A(survivors, i);
@@ -2247,6 +2360,7 @@ int stream_ref_sketches_one_qraw_lookup(ani_opt_t *ani_opt)
         free_read_from_file(refanno, (size_t)ref_n * PATHLEN);
     if (ref_infile_meta)
         free_read_from_file(ref_infile_meta, (size_t)ref_n * sizeof(ref_infile_meta[0]));
+    free_coverage_unique_bits(&ref_unique_bits);
     free_read_from_file(ref_idx, ref_idx_size);
     free_read_from_file(ref_stat, ref_stat_size);
     free_unify_sketch(qry);
@@ -2406,6 +2520,8 @@ int stream_ref_sketches_multi_qraw_sortedindex(ani_opt_t *ani_opt)
         errx(EXIT_FAILURE, "%s(): %s/%s has %zu bytes, expected %zu",
              __func__, ani_opt->refdir, idx_sketch_suffix, ref_idx_size,
              ((size_t)ref_n + 1) * sizeof(ref_idx[0]));
+    coverage_unique_bits_t ref_unique_bits =
+        load_coverage_unique_bits(ani_opt->refdir, ref_idx[ref_n]);
 
     char (*refanno)[PATHLEN] = read_optional_sketch_annotations(ani_opt->refdir, (int)ref_n);
     infile_meta_t *ref_infile_meta =
@@ -2573,6 +2689,7 @@ int stream_ref_sketches_multi_qraw_sortedindex(ani_opt_t *ani_opt)
             out_n = (size_t)ani_opt->ntop;
         if (out_n > 0)
             populate_selected_coverage_for_query(ani_opt, qry, q, ref_fp, ref_idx,
+                                                 &ref_unique_bits,
                                                  &kv_A(survivors[q], 0), out_n);
         for (size_t i = 0; i < out_n; ++i) {
             const ani_row_t *r = &kv_A(survivors[q], i);
@@ -2592,6 +2709,7 @@ int stream_ref_sketches_multi_qraw_sortedindex(ani_opt_t *ani_opt)
         free_read_from_file(refanno, (size_t)ref_n * PATHLEN);
     if (ref_infile_meta)
         free_read_from_file(ref_infile_meta, (size_t)ref_n * sizeof(ref_infile_meta[0]));
+    free_coverage_unique_bits(&ref_unique_bits);
     free_read_from_file(ref_idx, ref_idx_size);
     free_read_from_file(ref_stat, ref_stat_size);
     free_unify_sketch(qry);

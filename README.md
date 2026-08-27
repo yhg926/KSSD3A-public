@@ -251,6 +251,8 @@ Use `--ignoreconflict` with `ani` to skip reference-side conflict contexts durin
   -o raw_qry_sketches reads/*.fastq.gz
 
 ./bin/kssd3a sketch -i ref_sketches
+# If the sorted index already exists, this builds only the coverage marker sidecar.
+./bin/kssd3a sketch --unique-index ref_sketches
 
 ./bin/kssd3a ani -r ref_sketches --qraw raw_qry_sketches \
   -m 0 -p8 -o raw_read_ani.tsv
@@ -372,7 +374,7 @@ find /data/queries -name '*.fna' | sort > queries.txt
 
 ## Output Notes
 
-Default `ani -m 0` output is a tab-separated detail table. The main columns are query name, reference name, shared context count, query/reference alignment fractions, BLAST-like query/reference alignment fractions, mutation counters, and ANI. `ani -f/--afcut` filters on `max(Qry_align_fraction, Ref_align_fraction)`; the default is `0.5` for assembled queries and `0.2` for unassembled/qraw queries. Indexed ANI output can append one selected metric column after ANI. `ani --estimate-coverage -m0` appends coverage/depth and relative abundance columns for qraw query sketches built with `-A`; the first native estimator uses exact context-object markers unique among the reported reference rows.
+Default `ani -m 0` output is a tab-separated detail table. The main columns are query name, reference name, shared context count, query/reference alignment fractions, BLAST-like query/reference alignment fractions, mutation counters, and ANI. `ani -f/--afcut` filters on `max(Qry_align_fraction, Ref_align_fraction)`; the default is `0.5` for assembled queries and `0.2` for unassembled/qraw queries. Indexed ANI output can append one selected metric column after ANI. `ani --estimate-coverage -m0` appends coverage/depth and relative abundance columns for qraw query sketches built with `-A`; it uses `sortedcomb_ctxgid64obj32.unique_bits` full-refDB unique markers when that sidecar exists, otherwise it falls back to exact context-object markers unique among the reported reference rows.
 
 `sketch --dedup DIST` marks duplicate pairs when selected distance `< DIST`,
 `max(Qry_align_fraction, Ref_align_fraction) >= --dedup-max-afcut`, and

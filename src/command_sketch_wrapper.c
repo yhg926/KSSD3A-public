@@ -70,7 +70,8 @@ enum
   SKETCH_DEDUP_INDEX_MIN_VOTES = 908,
   SKETCH_DEDUP_INDEX_SAMPLE_STEP = 909,
   SKETCH_DROP_POSITION = 910,
-  SKETCH_DEDUP_STRATEGY = 911
+  SKETCH_DEDUP_STRATEGY = 911,
+  SKETCH_UNIQUE_INDEX = 912
 };
 
 static struct argp_option opt_sketch[] =
@@ -118,6 +119,7 @@ static struct argp_option opt_sketch[] =
 
         {0, 0, 0, 0, "Maintenance modes:", SKETCH_GROUP_MODES},
         {"index", 'i', "<FILE>", 0, "Build an inverted index for a combined sketch.", SKETCH_GROUP_MODES},
+        {"unique-index", SKETCH_UNIQUE_INDEX, "<SKETCH>", 0, "Build a full-reference unique-marker bitset for fast --estimate-coverage.", SKETCH_GROUP_MODES},
         {"merge", 777, 0, OPTION_HIDDEN, "Deprecated alias for --append copy mode.", SKETCH_GROUP_MODIFY},
         {"append", 778, 0, 0, "Append sketches; with -o writes a copy, without -o modifies the first sketch.", SKETCH_GROUP_MODIFY},
         {"remove", 896, "<FILE>", 0, "Remove listed samples; with -o writes a copy, without -o modifies the first sketch.", SKETCH_GROUP_MODIFY},
@@ -261,6 +263,7 @@ sketch_opt_t sketch_opt = {
                                    //  .fpath[0] ='\0',
     .outdir = "./",
     .index[0] = '\0',
+    .unique_index[0] = '\0',
     .remove_list = NULL,
     .remove_source = NULL,
     .keep_list = NULL,
@@ -337,6 +340,11 @@ static error_t parse_sketch(int key, char *arg, struct argp_state *state)
   case 'i':
   {
     copy_path_arg(state, "-i/--index", sketch_opt.index, sizeof(sketch_opt.index), arg);
+    break;
+  }
+  case SKETCH_UNIQUE_INDEX:
+  {
+    copy_path_arg(state, "--unique-index", sketch_opt.unique_index, sizeof(sketch_opt.unique_index), arg);
     break;
   }
   case 'p':
@@ -545,9 +553,10 @@ static error_t parse_sketch(int key, char *arg, struct argp_state *state)
                      + (sketch_opt.dedup_comblco ? 1 : 0)
                      + (sketch_opt.sketch_qc ? 1 : 0)
                      + (sketch_opt.print_mode ? 1 : 0)
-                     + (sketch_opt.index[0] != '\0' ? 1 : 0);
+                     + (sketch_opt.index[0] != '\0' ? 1 : 0)
+                     + (sketch_opt.unique_index[0] != '\0' ? 1 : 0);
     if (mode_count > 1)
-      argp_error(state, "Use only one of --merge, --append, --remove, --keep, --dedup, --sketchQC, --psmp/--psketch/--pindex/--ppos, or -i/--index.");
+      argp_error(state, "Use only one of --merge, --append, --remove, --keep, --dedup, --sketchQC, --psmp/--psketch/--pindex/--ppos, -i/--index, or --unique-index.");
     if (sketch->dedup_metric_seen && !sketch_opt.dedup_comblco)
       argp_error(state, "--metric is currently only used with --dedup.");
     if (sketch->dedup_strategy_seen && !sketch_opt.dedup_comblco)
@@ -663,7 +672,7 @@ static error_t parse_sketch(int key, char *arg, struct argp_state *state)
       printf("\nError: k-mer length %d should smaller than 32 \n\n", klen);
       exit(1);
     }
-    if (mode_count == 0 && sketch_opt.index[0] == '\0' && sketch_opt.fpath == NULL && sketch_opt.num_remaining_args == 0)
+    if (mode_count == 0 && sketch_opt.index[0] == '\0' && sketch_opt.unique_index[0] == '\0' && sketch_opt.fpath == NULL && sketch_opt.num_remaining_args == 0)
     {
       printf("\nError: missing input sequences file \n\n");
       argp_state_help(state, stdout, ARGP_HELP_STD_HELP);
@@ -723,6 +732,7 @@ extern uint32_t hash_id;
 extern dim_sketch_stat_t comblco_stat_one;
 extern void compute_sketch(sketch_opt_t *, infile_tab_t *);
 extern void gen_inverted_index4comblco(const char *sketchdir);
+extern void gen_unique_marker_index4comblco(const char *sketchdir);
 extern int merge_comblco(sketch_opt_t *sketch_opt_val);
 extern int append_comblco(sketch_opt_t *sketch_opt_val);
 extern int remove_comblco_samples(sketch_opt_t *sketch_opt_val);
@@ -1027,6 +1037,10 @@ int cmd_sketch(struct argp_state *state)
   else if (sketch_opt.index[0] != '\0')
   {
     gen_inverted_index4comblco(sketch_opt.index);
+  }
+  else if (sketch_opt.unique_index[0] != '\0')
+  {
+    gen_unique_marker_index4comblco(sketch_opt.unique_index);
   }
   else
   {

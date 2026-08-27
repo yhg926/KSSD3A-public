@@ -124,6 +124,7 @@ int keep_comblco_samples(sketch_opt_t *sketch_opt_val);
 int dedup_comblco_samples(sketch_opt_t *sketch_opt_val);
 int sketch_qc_comblco(sketch_opt_t *sketch_opt_val);
 void gen_inverted_index4comblco(const char* sketchdir);
+void gen_unique_marker_index4comblco(const char* sketchdir);
 //sketchuing methods family
 // produce sorted sketch
 void read_genomes2mem2sortedctxobj64 (sketch_opt_t * sketch_opt_val, infile_tab_t* infile_stat, int batch_size);

@@ -387,6 +387,7 @@ extern const char sketch_position_suffix[];
 extern const char combined_sketch_suffix[];
 extern const char combined_ab_suffix[];
 extern const char idx_sketch_suffix[];
+extern const char combined_unique_bits_suffix[];
 extern const char lpan_prefix[];
 extern const char luniq_pan_prefix[];
 // legency uint32_t sketch

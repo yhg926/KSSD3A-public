@@ -51,6 +51,7 @@ typedef struct sketch_opt
 	bool split_mfa;
 	bool coden_ctxobj_pattern; 	 
 	char index[PATHLEN];
+	char unique_index[PATHLEN];
 	char *remove_list;
 	char *remove_source;
 	char *keep_list;
