@@ -275,6 +275,21 @@ static void kh_resize_for_size(khash_t(kmer_set) *h, size_t n)
 		kh_resize(kmer_set, h, (khint_t)requested);
 }
 
+static int lsketch_ctx_obj_bits(const dim_sketch_stat_t *stat)
+{
+	const int ctx_bits = stat->coden_len > 0 ? 4 * stat->coden_len : 4 * stat->hclen;
+	const int obj_bits = 2 * stat->klen - ctx_bits;
+	if (obj_bits < 0 || obj_bits >= 64)
+		errx(EXIT_FAILURE, "invalid context-object layout: klen=%d coden_len=%d hclen=%d gives obj_bits=%d",
+			 stat->klen, stat->coden_len, stat->hclen, obj_bits);
+	return obj_bits;
+}
+
+static uint64_t lsketch_set_key(uint64_t ctxobj, set_key_mode_t key_mode, int obj_bits)
+{
+	return key_mode == SET_KEY_CTX ? ctxobj >> obj_bits : ctxobj;
+}
+
 static size_t *build_u64_highbit_bucket_offsets(const uint64_t *sorted, size_t n, unsigned bits)
 {
 	const size_t bucket_count = (size_t)1 << bits;
@@ -482,9 +497,18 @@ int lsketch_operate(set_opt_t *set_opt)
 	void *mem_stat_lco = read_from_file(test_get_fullpath(set_opt->insketchpath, sketch_stat), &file_size);
 	memcpy(&lco_stat_origin, mem_stat_lco, sizeof(lco_stat_origin));
 	if (lco_stat_pan.hash_id != lco_stat_origin.hash_id)
-		err(EXIT_FAILURE, "%s(): %s sketcing id %u != %s id %u", __func__, set_opt->pansketchpath, lco_stat_origin.hash_id, set_opt->insketchpath, lco_stat_pan.hash_id);
-	if (lco_stat_origin.koc)
-		printf("%s() Warning: k-mer abundances are dropped in this sketch operation\n ", __func__);
+		errx(EXIT_FAILURE, "%s(): %s sketching id %u != %s id %u", __func__, set_opt->pansketchpath, lco_stat_pan.hash_id, set_opt->insketchpath, lco_stat_origin.hash_id);
+	int key_obj_bits = 0;
+	if (set_opt->key_mode == SET_KEY_CTX)
+	{
+		if (lco_stat_pan.coden_len <= 0 || lco_stat_origin.coden_len <= 0)
+			errx(EXIT_FAILURE, "%s(): --key ctx currently supports only -T coden long sketches", __func__);
+		key_obj_bits = lsketch_ctx_obj_bits(&lco_stat_origin);
+		const int pan_obj_bits = lsketch_ctx_obj_bits(&lco_stat_pan);
+		if (pan_obj_bits != key_obj_bits)
+			errx(EXIT_FAILURE, "%s(): --key ctx requires matching object-bit widths: pan=%d input=%d",
+				 __func__, pan_obj_bits, key_obj_bits);
+	}
 	// copy sketch stat file to result sketch
 	write_to_file(test_create_fullpath(set_opt->outdir, sketch_stat), mem_stat_lco, file_size);
 	copy_lsketch_annotations(set_opt->insketchpath, set_opt->outdir, lco_stat_origin.infile_num);
@@ -499,17 +523,44 @@ int lsketch_operate(set_opt_t *set_opt)
 
 	uint64_t *mem_pan = (uint64_t *)read_from_file(lco_fpath, &file_size);
 	khash_t(kmer_set) *h = kh_init(kmer_set);
-	uint32_t kmer_ct = file_size / sizeof(uint64_t);
-	for (int i = 0; i < kmer_ct; i++)
-		kh_put(kmer_set, h, mem_pan[i], &ret);
+	size_t kmer_ct = file_size / sizeof(uint64_t);
+	kh_resize_for_size(h, kmer_ct);
+	for (size_t i = 0; i < kmer_ct; i++)
+		kh_put(kmer_set, h, lsketch_set_key(mem_pan[i], set_opt->key_mode, key_obj_bits), &ret);
 	// read comblco.index to mem
 	uint64_t *fco_pos = (uint64_t *)read_from_file(test_get_fullpath(set_opt->insketchpath, idx_sketch_suffix), &file_size);
 	// post operation index	calloc
 	uint64_t *post_fco_pos = calloc((lco_stat_origin.infile_num + 1), sizeof(uint64_t));
 	// read comblco to mem
 	uint64_t *tmp_comblco_mem = (uint64_t *)read_from_file(test_get_fullpath(set_opt->insketchpath, combined_sketch_suffix), &file_size);
-	uint64_t *post_comblco_mem = (uint64_t *)malloc(file_size);
-	uint32_t post_kmer_ct = 0;
+	const size_t input_comb_bytes = file_size;
+	if (input_comb_bytes % sizeof(tmp_comblco_mem[0]) != 0)
+		errx(EXIT_FAILURE, "%s(): %s/%s size %zu is not a multiple of %zu",
+			 __func__, set_opt->insketchpath, combined_sketch_suffix,
+			 input_comb_bytes, sizeof(tmp_comblco_mem[0]));
+	const size_t input_kmer_ct = input_comb_bytes / sizeof(tmp_comblco_mem[0]);
+	const bool preserve_abundance = lco_stat_origin.koc;
+	uint32_t *tmp_abundance_mem = NULL;
+	uint32_t *post_abundance_mem = NULL;
+	if (preserve_abundance)
+	{
+		size_t abundance_file_size = 0;
+		char *abundance_path = test_get_fullpath(set_opt->insketchpath, combined_ab_suffix);
+		tmp_abundance_mem = (uint32_t *)read_from_file(abundance_path, &abundance_file_size);
+		free(abundance_path);
+		const size_t expected_abundance_bytes = input_kmer_ct * sizeof(tmp_abundance_mem[0]);
+		if (abundance_file_size != expected_abundance_bytes)
+			errx(EXIT_FAILURE, "%s(): %s/%s has %zu bytes, expected %zu",
+				 __func__, set_opt->insketchpath, combined_ab_suffix,
+				 abundance_file_size, expected_abundance_bytes);
+		post_abundance_mem = (uint32_t *)malloc(expected_abundance_bytes);
+		if (expected_abundance_bytes > 0 && !post_abundance_mem)
+			err(errno, "%s(): OOM output abundance buffer", __func__);
+	}
+	uint64_t *post_comblco_mem = (uint64_t *)malloc(input_comb_bytes);
+	if (input_comb_bytes > 0 && !post_comblco_mem)
+		err(errno, "%s(): OOM output sketch buffer", __func__);
+	size_t post_kmer_ct = 0;
 
 	// sketch operation
 	for (uint32_t i = 0; i < lco_stat_origin.infile_num; i++)
@@ -517,8 +568,13 @@ int lsketch_operate(set_opt_t *set_opt)
 		for (uint64_t n = fco_pos[i]; n < fco_pos[i + 1]; n++)
 		{
 			// make sure set_opt->operation == 0 if subtract, == 1 if intersect
-			if (set_opt->operation == (kh_get(kmer_set, h, tmp_comblco_mem[n]) != kh_end(h)))
+			uint64_t key = lsketch_set_key(tmp_comblco_mem[n], set_opt->key_mode, key_obj_bits);
+			if (set_opt->operation == (kh_get(kmer_set, h, key) != kh_end(h)))
+			{
 				post_comblco_mem[post_kmer_ct++] = tmp_comblco_mem[n];
+				if (post_abundance_mem)
+					post_abundance_mem[post_kmer_ct - 1] = tmp_abundance_mem[n];
+			}
 		}
 		post_fco_pos[i + 1] = post_kmer_ct;
 	}
@@ -526,11 +582,17 @@ int lsketch_operate(set_opt_t *set_opt)
 	// write to result comblco
 	sprintf(outfpath, "%s/%s", set_opt->outdir, combined_sketch_suffix);
 	write_to_file(outfpath, post_comblco_mem, post_kmer_ct * sizeof(post_comblco_mem[0]));
+	if (preserve_abundance)
+	{
+		sprintf(outfpath, "%s/%s", set_opt->outdir, combined_ab_suffix);
+		write_to_file(outfpath, post_abundance_mem, post_kmer_ct * sizeof(post_abundance_mem[0]));
+	}
 	// write index
 	sprintf(outfpath, "%s/%s", set_opt->outdir, idx_sketch_suffix);
 	write_to_file(outfpath, post_fco_pos, (lco_stat_origin.infile_num + 1) * sizeof(post_fco_pos[0]));
 
-	free_all(mem_stat_pan, mem_stat_lco, lco_fpath, mem_pan, fco_pos, post_fco_pos, tmp_comblco_mem, post_comblco_mem, NULL);
+	free_all(mem_stat_pan, mem_stat_lco, lco_fpath, mem_pan, fco_pos, post_fco_pos,
+			 tmp_comblco_mem, tmp_abundance_mem, post_comblco_mem, post_abundance_mem, NULL);
 	return 1;
 }
 

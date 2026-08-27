@@ -47,6 +47,36 @@ require_same_size() {
   fi
 }
 
+require_abundance_matches_comblco() {
+  local sketch=$1
+  require_exists "$sketch/comblco"
+  require_exists "$sketch/comblco.a"
+  local csize
+  local asize
+  csize=$(stat -c %s "$sketch/comblco")
+  asize=$(stat -c %s "$sketch/comblco.a")
+  if [ $((csize % 8)) -ne 0 ] || [ $((asize % 4)) -ne 0 ] || [ $((csize / 8)) -ne $((asize / 4)) ]; then
+    printf 'smoke: expected %s/comblco and %s/comblco.a to have matching record counts, got %s and %s bytes\n' "$sketch" "$sketch" "$csize" "$asize" >&2
+    exit 1
+  fi
+}
+
+require_multiset_subset() {
+  local subset=$1
+  local superset=$2
+  awk -v subset="$subset" -v superset="$superset" '
+    NR == FNR { seen[$0]++; next }
+    {
+      if (seen[$0] > 0) {
+        seen[$0]--
+      } else {
+        printf "smoke: expected every line in %s to be retained from %s; missing: %s\n", subset, superset, $0 > "/dev/stderr"
+        exit 1
+      }
+    }
+  ' "$superset" "$subset"
+}
+
 require_same_file() {
   local a=$1
   local b=$2
@@ -684,8 +714,28 @@ require_nonempty "$OUT/union_sketch/lpan"
 require_nonempty "$OUT/uniq_union/luniq_pan"
 require_nonempty "$OUT/markerdb/comblco"
 require_nonempty "$OUT/markerdb/comblco.index"
+run "$BIN" set --intersect "$OUT/union_sketch" --key ctx -o "$OUT/intersect_ctx" "$OUT/qry_sketch"
+run "$BIN" set --subtract "$OUT/union_sketch" --key ctx -o "$OUT/subtract_ctx" "$OUT/qry_sketch"
+require_nonempty "$OUT/intersect_ctx/comblco"
+require_nonempty "$OUT/intersect_ctx/comblco.index"
+require_exists "$OUT/subtract_ctx/comblco"
+require_exists "$OUT/subtract_ctx/comblco.index"
+if "$BIN" set --union --key ctx -o "$OUT/rejected_ctx_union" "$OUT/ref_sketch" > "$OUT/rejected_ctx_union.log" 2>&1; then
+  printf 'smoke: set --union --key ctx should be rejected for now\n' >&2
+  exit 1
+fi
+require_file_contains "$OUT/rejected_ctx_union.log" "currently supports only --intersect/--intsect and --subtract"
 
 run "$BIN" sketch -A -f0 -o "$OUT/qry_abundance" "$QRYS/qryA.fna" "$QRYS/qryMix.fna"
+run "$BIN" set --intersect "$OUT/union_sketch" --key ctx -o "$OUT/qry_abundance_intersect_ctx" "$OUT/qry_abundance"
+run "$BIN" set --subtract "$OUT/union_sketch" --key ctx -o "$OUT/qry_abundance_subtract_ctx" "$OUT/qry_abundance"
+require_abundance_matches_comblco "$OUT/qry_abundance_intersect_ctx"
+require_abundance_matches_comblco "$OUT/qry_abundance_subtract_ctx"
+run "$BIN" set --psketch "$OUT/qry_abundance" > "$OUT/qry_abundance.psketch.tsv"
+run "$BIN" set --psketch "$OUT/qry_abundance_intersect_ctx" > "$OUT/qry_abundance_intersect_ctx.psketch.tsv"
+run "$BIN" set --psketch "$OUT/qry_abundance_subtract_ctx" > "$OUT/qry_abundance_subtract_ctx.psketch.tsv"
+require_multiset_subset "$OUT/qry_abundance_intersect_ctx.psketch.tsv" "$OUT/qry_abundance.psketch.tsv"
+require_multiset_subset "$OUT/qry_abundance_subtract_ctx.psketch.tsv" "$OUT/qry_abundance.psketch.tsv"
 mkdir -p "$OUT/qry_abundance_noqc"
 cp "$OUT/qry_abundance/lcofiles.stat" "$OUT/qry_abundance_noqc/lcofiles.stat"
 cp "$OUT/qry_abundance/comblco" "$OUT/qry_abundance_noqc/comblco"

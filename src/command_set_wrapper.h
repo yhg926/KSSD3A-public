@@ -16,9 +16,16 @@
 #include <errno.h>
 #include <math.h>
 
+typedef enum set_key_mode
+{
+  SET_KEY_FULL = 0,
+  SET_KEY_CTX = 1
+} set_key_mode_t;
+
 typedef struct set_opt
 {
   int operation;
+  set_key_mode_t key_mode;
   bool q2markerdb;
   int p;
   int P;

@@ -1095,9 +1095,28 @@ kssd3a set --uniq_union --markerdb -o markerdb input_sketches
 Intersect or subtract with a pan sketch:
 
 ```bash
-kssd3a set --intsect pan_sketch -o intersected input_sketches
+kssd3a set --intersect pan_sketch -o intersected input_sketches
 kssd3a set --subtract pan_sketch -o subtracted input_sketches
 ```
+
+The default set key is `--key full`, which compares the full encoded
+context-object record. For `-T` long sketches, `--intersect` and `--subtract`
+also support context-only matching:
+
+```bash
+kssd3a set --intersect pan_sketch --key ctx -o intersected_by_context input_sketches
+kssd3a set --subtract pan_sketch --key ctx -o subtracted_by_context input_sketches
+```
+
+With `--key ctx`, only the context part is used for the membership test. The
+output still stores the original full context-object records from
+`input_sketches`, so the object part is preserved for downstream ANI or object
+difference analysis. The older spelling `--intsect` remains available as an
+alias.
+
+For abundance sketches produced with `sketch -A`, `--intersect` and
+`--subtract` also write a filtered `comblco.a` file. Each retained count remains
+aligned with the retained context-object record from the original input sketch.
 
 Group by a metadata table:
 

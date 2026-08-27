@@ -2,6 +2,8 @@
 #include "command_set.h"
 #include "command_operate.h"
 /*** argp wraper ***/
+#define SET_ARG_KEY_MODE 890
+
 struct arg_set
 {
   struct arg_global* global;
@@ -14,6 +16,8 @@ static struct argp_option opt_set[] =
   {"union",'u', 0,  0, "Compute the union set of sketches.",1 },
 	{"subtract",'s',"<pan>", 0,"Subtract the pan-sketch from each input sketch.",2 },
 	{"intsect",'i',"<pan>", 0, "Intersect each input sketch with the pan-sketch.",2},
+	{"intersect",334,"<pan>", 0, "Alias for --intsect.",2},
+	{"key",SET_ARG_KEY_MODE,"<full|ctx>", 0, "Set operation key. full compares context+object; ctx compares context only for --intersect/--subtract. [full]",2},
 	{"uniq_union",'q',0,  0, "Compute the unique union set of sketches.",3 },
     {"markerdb",333,0,  0, "Generate marker database instead of unique union set. Requires -q.",4 },
 //	{"combin_pan",'c',0,  0, "combine pan files to combco file.",4 },
@@ -31,17 +35,20 @@ static char doc_set[] =
   "\n"
   "Run set operations on combined sketches."
   "\v"
-  "Choose one operation such as --union, --uniq_union, --intsect, or --subtract.\n"
+  "Choose one operation such as --union, --uniq_union, --intersect, --intsect, or --subtract.\n"
+  "Use --key ctx with --intersect/--subtract on -T long sketches to match by context only while preserving original context-object records in output.\n"
   "\n"
   "Examples:\n"
   "  kssd3a set --union -o union_sketch input_sketches\n"
   "  kssd3a set --uniq_union --markerdb -o markerdb input_sketches\n"
-  "  kssd3a set --subtract pan_sketch -o subtracted input_sketches"
+  "  kssd3a set --intersect pan_sketch --key ctx -o intersected input_sketches\n"
+  "  kssd3a set --subtract pan_sketch --key ctx -o subtracted input_sketches"
   ;
 
 
 set_opt_t set_opt = {
 .operation = -1,//0:subtract,1:intersect,2 union, 3 uniq_union, 4 combin_pan
+.key_mode = SET_KEY_FULL,
 .q2markerdb = 0, // when -q set, generate markerdb instead of uniq union set, only for lco sketch 
 .p = 1,
 .P = 0,
@@ -105,13 +112,24 @@ static error_t parse_set(int key, char* arg, struct argp_state* state) {
 			break;
 		}
 		case 'i':
+		case 334:
 		{
 		
-			if (set_opt.operation != -1 ) printf("set operation is already set, -i is ignored.\n");
+			if (set_opt.operation != -1 ) printf("set operation is already set, --intersect is ignored.\n");
 			else {
 				set_opt.operation = 1 ;            
-				copy_path_arg(state, "-i/--intsect", set_opt.pansketchpath, sizeof(set_opt.pansketchpath), arg);
+				copy_path_arg(state, "-i/--intersect", set_opt.pansketchpath, sizeof(set_opt.pansketchpath), arg);
 			}
+			break;
+		}
+		case SET_ARG_KEY_MODE:
+		{
+			if (strcmp(arg, "full") == 0)
+				set_opt.key_mode = SET_KEY_FULL;
+			else if (strcmp(arg, "ctx") == 0)
+				set_opt.key_mode = SET_KEY_CTX;
+			else
+				argp_error(state, "--key must be one of: full, ctx");
 			break;
 		}
 		case 'c':
@@ -214,6 +232,8 @@ int cmd_set(struct argp_state* state)
   state->next += argc - 1;
 	// operation and arg control
 	if(argc >1){	
+		if(set_opt.key_mode == SET_KEY_CTX && set_opt.operation != 0 && set_opt.operation != 1)
+			errx(EXIT_FAILURE, "--key ctx currently supports only --intersect/--intsect and --subtract");
 		if(set_opt.operation == 2){
 			if(file_exists_in_folder(set_opt.insketchpath,co_dstat) )
 				return sketch_union(&set_opt); 
@@ -230,8 +250,11 @@ int cmd_set(struct argp_state* state)
 			return combin_pans(&set_opt);
 		}
 		else if(set_opt.operation == 0 || set_opt.operation == 1 ){
-			if(file_exists_in_folder(set_opt.pansketchpath,co_dstat))
+			if(file_exists_in_folder(set_opt.pansketchpath,co_dstat)) {
+				if(set_opt.key_mode == SET_KEY_CTX)
+					errx(EXIT_FAILURE, "--key ctx requires long -T sketches and does not support legacy cofiles sketches");
 				return sketch_operate(&set_opt) ;
+			}
 			else if (file_exists_in_folder(set_opt.pansketchpath,sketch_stat))
 				 return lsketch_operate(&set_opt) ;
 		}
