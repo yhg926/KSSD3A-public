@@ -27,6 +27,7 @@ typedef struct ani_opt
 	bool unified_metric; // honor -s in unassembled mode instead of forcing naive
 	bool ignoreconflict; // ignore reference contexts with conflicting objects
 	bool raw_output; // skip calibrated/best ANI; print NULLs in unified detail fields
+	bool estimate_coverage; // append abundance-derived coverage columns in detail output
 	int e;
 	int s; // select metrics;
 	int ntop; // report at most top N references for each query

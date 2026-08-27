@@ -283,6 +283,7 @@ run "$BIN" doctor
 run "$BIN" sketch -f0 -p2 -o "$OUT/ref_sketch" "$REFS/refA.fna" "$REFS/refB.fna"
 run "$BIN" sketch -f0 -p2 -o "$OUT/qry_sketch" "$QRYS/qryA.fna" "$QRYS/qryA2.fna"
 run "$BIN" sketch --conflict -f0 -p2 -o "$OUT/read_sketch" "$READS/reads.fastq"
+run "$BIN" sketch --conflict -A -f0 -p2 -o "$OUT/read_sketch_abundance" "$READS/reads.fastq"
 run "$BIN" sketch -f0 -p2 -o "$OUT/read_sketch_noconflict" "$READS/reads.fastq"
 run "$BIN" sketch --position -f0 -p2 -o "$OUT/pos_sketch_many" "$REFS/refA.fna" "$REFS/refB.fna"
 run "$BIN" sketch --position --conflict -f0 -p4 -o "$OUT/pos_sketch_one" "$READS/reads.fastq"
@@ -613,6 +614,8 @@ run "$BIN" ani -r "$OUT/ref_sketch" -q "$OUT/qry_sketch" -f0 -n0 -m0 -o "$OUT/an
 run "$BIN" ani -r "$OUT/ref_sketch" -q "$OUT/read_sketch" -f0 -n0 -m0 -o "$OUT/ani_query_conflict_sketch.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" -q "$OUT/read_sketch_noconflict" -f0 -n0 -m0 -o "$OUT/ani_query_noconflict_sketch.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$OUT/read_sketch" -f0 -n0 -m0 -o "$OUT/ani_qraw.tsv"
+run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$OUT/read_sketch_abundance" -f0 -n0 -m0 --estimate-coverage -o "$OUT/ani_qraw_estcov.tsv"
+run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$OUT/read_sketch" -f0 -n0 -m0 --estimate-coverage -o "$OUT/ani_qraw_estcov_noabundance.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq" -f0 -n0 -m0 -o "$OUT/ani_qraw_direct_fastq.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq.gz" -f0 -n0 -m0 -o "$OUT/ani_qraw_direct_fastq_gz.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq.gz" -n0 -m0 -o "$OUT/ani_qraw_default_afcut.tsv"
@@ -643,6 +646,8 @@ require_nonempty "$OUT/ani_detail.tsv"
 require_nonempty "$OUT/ani_query_conflict_sketch.tsv"
 require_nonempty "$OUT/ani_query_noconflict_sketch.tsv"
 require_nonempty "$OUT/ani_qraw.tsv"
+require_nonempty "$OUT/ani_qraw_estcov.tsv"
+require_nonempty "$OUT/ani_qraw_estcov_noabundance.tsv"
 require_nonempty "$OUT/ani_qraw_direct_fastq.tsv"
 require_nonempty "$OUT/ani_qraw_direct_fastq_gz.tsv"
 require_nonempty "$OUT/ani_qraw_default_afcut.tsv"
@@ -665,11 +670,17 @@ require_header_has "$OUT/ani_auto_fasta.tsv" Selected_metric
 require_header_has "$OUT/ani_auto_fastq.tsv" Selected_metric
 require_header_has "$OUT/ani_auto_stdin.tsv" Selected_metric
 require_header_has "$OUT/ani_auto_pipecmd.tsv" Selected_metric
+require_header_has "$OUT/ani_qraw_estcov.tsv" Estimated_depth
+require_header_has "$OUT/ani_qraw_estcov.tsv" Estimated_abundance_fraction
+require_file_contains "$OUT/ani_qraw_estcov.tsv" "reported_unique_ctxobj_sum"
+require_file_contains "$OUT/ani_qraw_estcov_noabundance.tsv" "NA:query_missing_comblco.a"
 for ani_tsv in \
   "$OUT/ani_detail.tsv" \
   "$OUT/ani_query_conflict_sketch.tsv" \
   "$OUT/ani_query_noconflict_sketch.tsv" \
   "$OUT/ani_qraw.tsv" \
+  "$OUT/ani_qraw_estcov.tsv" \
+  "$OUT/ani_qraw_estcov_noabundance.tsv" \
   "$OUT/ani_qraw_direct_fastq.tsv" \
   "$OUT/ani_qraw_direct_fastq_gz.tsv" \
   "$OUT/ani_qraw_default_afcut.tsv" \

@@ -34,6 +34,7 @@ extern double C9O7_98[6], C9O7_96[6];
 size_t file_size;
 
 const char unified_detail_header[] = "Qry\tRef\tANI\tDistance\tConfidence\tSelected_metric\tXnY_ctx\tQry_align_fraction\tblastn_Qry_align_fraction\tRef_align_fraction\tblastn_Ref_align_fraction\tN_diff_obj\tN_diff_obj_section\tN_mut2_ctx\tRef_annotation";
+const char coverage_detail_header[] = "Coverage_estimator\tCoverage_ref_markers\tCoverage_observed_markers\tCoverage_observed_fraction\tCoverage_count_sum\tEstimated_depth\tPositive_mean_depth\tPositive_median_depth\tCount_CV\tEstimated_abundance_mass\tEstimated_abundance_fraction\tAbundance_fraction_scope";
 #define ANI_SELECTED_METRIC_COUNT 9
 const char select_metrics_header[ANI_SELECTED_METRIC_COUNT][20] = {
 	"BestDist", "RecalDist", "CtxMoE", "Naive",
@@ -151,9 +152,11 @@ static inline double aaf_ani_from_counts(double overlap, double qry_ctx, double 
 
 static inline void print_ani_detail_header(FILE *outfp, const ani_opt_t *ani_opt, bool include_selected_metric)
 {
-	(void)ani_opt;
 	(void)include_selected_metric;
-	fprintf(outfp, "%s\n", unified_detail_header);
+	fprintf(outfp, "%s", unified_detail_header);
+	if (ani_opt && ani_opt->estimate_coverage)
+		fprintf(outfp, "\t%s", coverage_detail_header);
+	fprintf(outfp, "\n");
 }
 
 static inline const char *annotation_or_na(const char *annotation)
@@ -217,7 +220,12 @@ static void load_infile_meta_for_best_guard(unify_sketch_t *sketch, const char *
 
 static unsigned ani_query_parse_flags(const ani_opt_t *ani_opt)
 {
-	return ani_best_guard_enabled(ani_opt) ? SKETCH_PARSE_INFILE_META : SKETCH_PARSE_NONE;
+	unsigned flags = SKETCH_PARSE_NONE;
+	if (ani_best_guard_enabled(ani_opt))
+		flags |= SKETCH_PARSE_INFILE_META;
+	if (ani_opt && ani_opt->estimate_coverage)
+		flags |= SKETCH_PARSE_ABUNDANCE;
+	return flags;
 }
 
 static unsigned ani_ref_parse_flags(const ani_opt_t *ani_opt)
@@ -841,7 +849,18 @@ typedef struct {
     unsigned char confidence;
     unsigned char best_guarded;
     unsigned char af_pass;
+    unsigned char coverage_status;
     double   af_qry, blastn_af_qry, af_ref, blastn_af_ref;
+    uint32_t coverage_ref_markers;
+    uint32_t coverage_observed_markers;
+    double   coverage_observed_fraction;
+    double   coverage_count_sum;
+    double   estimated_depth;
+    double   positive_mean_depth;
+    double   positive_median_depth;
+    double   count_cv;
+    double   estimated_abundance_mass;
+    double   estimated_abundance_fraction;
     int      XnY_ctx, N_diff_obj, N_diff_obj_section, N_mut2_ctx;
 } ani_row_t;
 
@@ -862,6 +881,17 @@ typedef kvec_t(ani_row_t) kv_ani_row_t;
 static inline const char *ani_best_confidence_label(const ani_row_t *r)
 {
 	return r->best_guarded ? "guarded_low_confidence" : ani_confidence_label(r->confidence);
+}
+
+static inline const char *coverage_estimator_label(const ani_row_t *r)
+{
+	if (!r || r->coverage_status == 0)
+		return "NA:not_computed";
+	if (r->coverage_status == 2)
+		return "NA:query_missing_comblco.a";
+	if (r->coverage_status == 3)
+		return "NA:ref_read_error";
+	return "reported_unique_ctxobj_sum";
 }
 
 static inline void fill_row_calibration(ani_row_t *r, bool unassembled,
@@ -1076,6 +1106,27 @@ static inline void append_unified_detail_row(kstring_t *ks_out,
              qry_name, ref_name, selected_similarity, selected_distance, confidence, metric_name,
              r->XnY_ctx, r->af_qry, blastn_af_qry, r->af_ref, blastn_af_ref,
              r->N_diff_obj, r->N_diff_obj_section, r->N_mut2_ctx, ref_annotation);
+    if (ani_opt && ani_opt->estimate_coverage) {
+        if (ks_out->l > 0 && ks_out->s[ks_out->l - 1] == '\n')
+            ks_out->l--;
+        if (r->coverage_status == 1) {
+            ksprintf(ks_out, "\t%s\t%u\t%u\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\treported_rows\n",
+                     coverage_estimator_label(r),
+                     r->coverage_ref_markers,
+                     r->coverage_observed_markers,
+                     r->coverage_observed_fraction,
+                     r->coverage_count_sum,
+                     r->estimated_depth,
+                     r->positive_mean_depth,
+                     r->positive_median_depth,
+                     r->count_cv,
+                     r->estimated_abundance_mass,
+                     r->estimated_abundance_fraction);
+        } else {
+            ksprintf(ks_out, "\t%s\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\n",
+                     coverage_estimator_label(r));
+        }
+    }
 }
 
 static inline void print_unified_detail_row(FILE *outfp,
@@ -1842,6 +1893,174 @@ static int compute_streamed_ref_row_one_qry(
     return 1;
 }
 
+typedef struct {
+    uint32_t rn;
+    uint64_t *keys;
+    size_t n;
+} coverage_ref_slice_t;
+
+static size_t lower_bound_u64_local(const uint64_t *arr, size_t n, uint64_t value)
+{
+    size_t lo = 0, hi = n;
+    while (lo < hi) {
+        const size_t mid = lo + ((hi - lo) >> 1);
+        if (arr[mid] < value)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+static size_t upper_bound_u64_local(const uint64_t *arr, size_t n, uint64_t value)
+{
+    size_t lo = 0, hi = n;
+    while (lo < hi) {
+        const size_t mid = lo + ((hi - lo) >> 1);
+        if (arr[mid] <= value)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+static int compare_u32_local(const void *a, const void *b)
+{
+    const uint32_t av = *(const uint32_t *)a;
+    const uint32_t bv = *(const uint32_t *)b;
+    return (av > bv) - (av < bv);
+}
+
+static void populate_selected_coverage_for_query(
+    const ani_opt_t *ani_opt,
+    const unify_sketch_t *qry,
+    uint32_t qid,
+    FILE *ref_fp,
+    const uint64_t *ref_idx,
+    ani_row_t *rows,
+    size_t n_rows)
+{
+    if (!ani_opt || !ani_opt->estimate_coverage || !rows || n_rows == 0)
+        return;
+
+    if (!qry || !qry->abundance || qid >= (uint32_t)qry->infile_num) {
+        for (size_t i = 0; i < n_rows; ++i)
+            rows[i].coverage_status = 2;
+        return;
+    }
+
+    coverage_ref_slice_t *slices = calloc(n_rows, sizeof(*slices));
+    if (!slices)
+        err(EXIT_FAILURE, "%s(): OOM coverage ref slices", __func__);
+
+    size_t total_keys = 0;
+    for (size_t i = 0; i < n_rows; ++i) {
+        const uint32_t rn = rows[i].rn;
+        const uint64_t begin = ref_idx[rn];
+        const uint64_t end = ref_idx[rn + 1];
+        if (end < begin)
+            errx(EXIT_FAILURE, "%s(): invalid reference index for genome %u", __func__, rn);
+        const size_t len = (size_t)(end - begin);
+        slices[i].rn = rn;
+        slices[i].n = len;
+        total_keys += len;
+        if (len == 0)
+            continue;
+        slices[i].keys = malloc(len * sizeof(slices[i].keys[0]));
+        if (!slices[i].keys)
+            err(EXIT_FAILURE, "%s(): OOM coverage reference keys", __func__);
+        if (fseeko(ref_fp, (off_t)(begin * sizeof(uint64_t)), SEEK_SET) != 0)
+            err(errno, "%s(): failed to seek reference sketch for coverage", __func__);
+        const size_t got = fread(slices[i].keys, sizeof(slices[i].keys[0]), len, ref_fp);
+        if (got != len)
+            errx(EXIT_FAILURE, "%s(): short reference read for coverage: got %zu, expected %zu",
+                 __func__, got, len);
+    }
+
+    uint64_t *all_keys = total_keys ? malloc(total_keys * sizeof(all_keys[0])) : NULL;
+    if (total_keys && !all_keys)
+        err(EXIT_FAILURE, "%s(): OOM coverage key pool", __func__);
+    size_t out = 0;
+    for (size_t i = 0; i < n_rows; ++i) {
+        if (slices[i].n) {
+            memcpy(all_keys + out, slices[i].keys, slices[i].n * sizeof(all_keys[0]));
+            out += slices[i].n;
+        }
+    }
+    if (total_keys)
+        qsort(all_keys, total_keys, sizeof(all_keys[0]), qsort_comparator_uint64);
+
+    const size_t q_begin = (size_t)qry->sketch_index[qid];
+    const size_t q_end = (size_t)qry->sketch_index[qid + 1];
+    const uint64_t *q_keys = qry->comb_sketch + q_begin;
+    const uint32_t *q_counts = qry->abundance + q_begin;
+    const size_t q_n = q_end - q_begin;
+
+    double total_mass = 0.0;
+    for (size_t i = 0; i < n_rows; ++i) {
+        ani_row_t *row = &rows[i];
+        uint32_t markers = 0;
+        uint32_t observed = 0;
+        double count_sum = 0.0;
+        double count_sumsq = 0.0;
+        uint32_t *positive_counts = slices[i].n ? malloc(slices[i].n * sizeof(positive_counts[0])) : NULL;
+        if (slices[i].n && !positive_counts)
+            err(EXIT_FAILURE, "%s(): OOM coverage count buffer", __func__);
+
+        for (size_t k = 0; k < slices[i].n; ++k) {
+            const uint64_t key = slices[i].keys[k];
+            const size_t lo = lower_bound_u64_local(all_keys, total_keys, key);
+            const size_t hi = upper_bound_u64_local(all_keys, total_keys, key);
+            if (hi - lo != 1)
+                continue;
+            markers++;
+            const size_t qi = lower_bound_u64_local(q_keys, q_n, key);
+            if (qi < q_n && q_keys[qi] == key) {
+                const uint32_t c = q_counts[qi];
+                positive_counts[observed++] = c;
+                count_sum += (double)c;
+                count_sumsq += (double)c * (double)c;
+            }
+        }
+
+        row->coverage_status = 1;
+        row->coverage_ref_markers = markers;
+        row->coverage_observed_markers = observed;
+        row->coverage_observed_fraction = markers ? (double)observed / (double)markers : 0.0;
+        row->coverage_count_sum = count_sum;
+        row->estimated_depth = markers ? count_sum / (double)markers : 0.0;
+        row->positive_mean_depth = observed ? count_sum / (double)observed : 0.0;
+        if (observed) {
+            qsort(positive_counts, observed, sizeof(positive_counts[0]), compare_u32_local);
+            if (observed & 1u)
+                row->positive_median_depth = positive_counts[observed / 2u];
+            else
+                row->positive_median_depth =
+                    ((double)positive_counts[observed / 2u - 1u] +
+                     (double)positive_counts[observed / 2u]) / 2.0;
+            const double mean = row->positive_mean_depth;
+            double variance = count_sumsq / (double)observed - mean * mean;
+            if (variance < 0.0 && variance > -1e-9)
+                variance = 0.0;
+            row->count_cv = mean > 0.0 && variance > 0.0 ? sqrt(variance) / mean : 0.0;
+        }
+        row->estimated_abundance_mass = count_sum;
+        total_mass += count_sum;
+        free(positive_counts);
+    }
+
+    if (total_mass > 0.0) {
+        for (size_t i = 0; i < n_rows; ++i)
+            rows[i].estimated_abundance_fraction = rows[i].estimated_abundance_mass / total_mass;
+    }
+
+    for (size_t i = 0; i < n_rows; ++i)
+        free(slices[i].keys);
+    free(slices);
+    free(all_keys);
+}
+
 int stream_ref_sketches_one_qraw_lookup(ani_opt_t *ani_opt)
 {
     unify_sketch_t *qry = generic_sketch_parse(ani_opt->qrydir, ani_query_parse_flags(ani_opt));
@@ -1990,6 +2209,9 @@ int stream_ref_sketches_one_qraw_lookup(ani_opt_t *ani_opt)
     size_t out_n = kv_size(survivors);
     if (ani_opt->ntop > 0 && (size_t)ani_opt->ntop < out_n)
         out_n = (size_t)ani_opt->ntop;
+    if (out_n > 0)
+        populate_selected_coverage_for_query(ani_opt, qry, 0, ref_fp, ref_idx,
+                                             &kv_A(survivors, 0), out_n);
     for (size_t i = 0; i < out_n; ++i) {
         const ani_row_t *r = &kv_A(survivors, i);
         print_unified_detail_row(outfp, ani_opt, qry->gname[0], refname[r->rn],
@@ -2331,6 +2553,9 @@ int stream_ref_sketches_multi_qraw_sortedindex(ani_opt_t *ani_opt)
         size_t out_n = kv_size(survivors[q]);
         if (ani_opt->ntop > 0 && (size_t)ani_opt->ntop < out_n)
             out_n = (size_t)ani_opt->ntop;
+        if (out_n > 0)
+            populate_selected_coverage_for_query(ani_opt, qry, q, ref_fp, ref_idx,
+                                                 &kv_A(survivors[q], 0), out_n);
         for (size_t i = 0; i < out_n; ++i) {
             const ani_row_t *r = &kv_A(survivors[q], i);
             print_unified_detail_row(outfp, ani_opt, qry->gname[q], refname[r->rn],

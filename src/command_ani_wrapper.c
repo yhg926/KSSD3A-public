@@ -48,7 +48,8 @@ enum
 	ANI_SKETCH_SPLITMFA,
 	ANI_SKETCH_PIPECMD,
 	ANI_RAW_OUTPUT,
-	ANI_UNIFIED_METRIC
+	ANI_UNIFIED_METRIC,
+	ANI_ESTIMATE_COVERAGE
 };
 
 enum
@@ -92,6 +93,7 @@ static struct argp_option opt_ani[] =
 		{"outfmt", 'm', "<0/1/2>", 0, "Output format: detail(0), matrix(1), or triangle(2). [0]", ANI_GROUP_REPORT},
 		{"outfile", 'o', "<FILE>", 0, "Output file. [STDOUT]", ANI_GROUP_REPORT},
 		{"raw-output", ANI_RAW_OUTPUT, 0, 0, "Skip calibrated/best ANI computation; selected calibrated metrics fall back to raw distances when unavailable.", ANI_GROUP_REPORT},
+		{"estimate-coverage", ANI_ESTIMATE_COVERAGE, 0, 0, "Append abundance-derived coverage/depth columns for --qraw detail output when the query sketch has comblco.a.", ANI_GROUP_REPORT},
 		{"top", 'N', "<INT>", 0, "Report at most top N references per query. [all]", ANI_GROUP_REPORT},
 
 		{0, 0, 0, 0, "Execution:", ANI_GROUP_EXECUTION},
@@ -164,6 +166,7 @@ ani_opt_t ani_opt = {
 	.unified_metric = 0,
 	.ignoreconflict = 0,
 	.raw_output = 0,
+	.estimate_coverage = 0,
 	.ctxcut = 3,
 	.afcut = 0.5,
 	.afcut_set = false,
@@ -365,6 +368,11 @@ static error_t parse_ani(int key, char *arg, struct argp_state *state)
 		ani_opt.unified_metric = true;
 		break;
 	}
+	case ANI_ESTIMATE_COVERAGE:
+	{
+		ani_opt.estimate_coverage = true;
+		break;
+	}
 	case 't':
 	{
 		ani_opt.ctxcut = parse_int_range(state, "-t/--ctxcut", arg, 0, INT_MAX);
@@ -474,6 +482,10 @@ static error_t parse_ani(int key, char *arg, struct argp_state *state)
 		}
 		if (ani_opt.sketch_pipecmd[0] != '\0' && ani_opt.sketch_split_mfa)
 			argp_error(state, "--splitmfa does not support --pipecmd streaming inputs");
+		if (ani_opt.estimate_coverage && ani_opt.fmt != 0)
+			argp_error(state, "--estimate-coverage is supported only with detail output (-m0).");
+		if (ani_opt.estimate_coverage && !ani_opt.unassembled)
+			argp_error(state, "--estimate-coverage currently requires --qraw raw/unassembled query mode.");
 
 		if (has_reflist || has_qrylist)
 		{

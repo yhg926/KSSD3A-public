@@ -258,6 +258,12 @@ Use `--ignoreconflict` with `ani` to skip reference-side conflict contexts durin
 # One-step raw query: sketch reads.fastq.gz temporarily, then run qraw ANI.
 ./bin/kssd3a ani -r ref_sketches --qraw reads.fastq.gz \
   -m 0 -p8 -o raw_read_ani.tsv
+
+# Optional native coverage/depth columns when the query sketch has counts.
+./bin/kssd3a sketch --conflict -A -f8 -p8 \
+  -o raw_qry_abundance_sketches reads/*.fastq.gz
+./bin/kssd3a ani -r ref_sketches --qraw raw_qry_abundance_sketches \
+  --estimate-coverage -m 0 -p8 -o raw_read_ani.coverage.tsv
 ```
 
 ### Reads-to-Reads ANI
@@ -366,7 +372,7 @@ find /data/queries -name '*.fna' | sort > queries.txt
 
 ## Output Notes
 
-Default `ani -m 0` output is a tab-separated detail table. The main columns are query name, reference name, shared context count, query/reference alignment fractions, BLAST-like query/reference alignment fractions, mutation counters, and ANI. `ani -f/--afcut` filters on `max(Qry_align_fraction, Ref_align_fraction)`; the default is `0.5` for assembled queries and `0.2` for unassembled/qraw queries. Indexed ANI output can append one selected metric column after ANI.
+Default `ani -m 0` output is a tab-separated detail table. The main columns are query name, reference name, shared context count, query/reference alignment fractions, BLAST-like query/reference alignment fractions, mutation counters, and ANI. `ani -f/--afcut` filters on `max(Qry_align_fraction, Ref_align_fraction)`; the default is `0.5` for assembled queries and `0.2` for unassembled/qraw queries. Indexed ANI output can append one selected metric column after ANI. `ani --estimate-coverage -m0` appends coverage/depth and relative abundance columns for qraw query sketches built with `-A`; the first native estimator uses exact context-object markers unique among the reported reference rows.
 
 `sketch --dedup DIST` marks duplicate pairs when selected distance `< DIST`,
 `max(Qry_align_fraction, Ref_align_fraction) >= --dedup-max-afcut`, and

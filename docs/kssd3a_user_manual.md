@@ -595,6 +595,21 @@ kssd3a ani -r ref_sketches --qraw reads.fastq.gz \
 `--qraw` keeps query conflicts by default for direct sequence input and uses
 raw/unassembled ANI semantics.
 
+If the query sketch was built with abundance counts, detail output can append
+native coverage/depth estimates:
+
+```bash
+kssd3a sketch --conflict -A -f8 -p8 -o read_qry_sketches reads/*.fastq.gz
+kssd3a ani -r ref_sketches --qraw read_qry_sketches \
+  --estimate-coverage -m0 -f0.2 -n0.9 -p8 -o reads_to_assembly.coverage.tsv
+```
+
+`--estimate-coverage` requires `--qraw` and detail output (`-m0`). It uses the
+query `comblco.a` counts and exact context-object markers that are unique among
+the reported reference rows to append coverage/depth and relative abundance
+columns. If the query sketch lacks `comblco.a`, the added columns report
+`NA:query_missing_comblco.a`.
+
 ### 6.3 Assembly-To-Reads
 
 If reads are stored on the reference side and assemblies on the query side,
