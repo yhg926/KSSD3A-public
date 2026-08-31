@@ -480,4 +480,23 @@ Command line options for each subcommand are provided by the built-in help syste
 ./bin/kssd3a <subcommand> --help
 ```
 
-For license details see [`LICENSE.txt`](LICENSE.txt).
+## License, Commercial Use, and Trademarks
+
+KSSD3A public CLI source code is licensed under the Apache License, Version
+2.0. Commercial use, modification, internal deployment, and redistribution are
+permitted subject to that license. See [`LICENSE.txt`](LICENSE.txt) for the
+full license text and [`NOTICE`](NOTICE) for attribution notices.
+
+This public repository is the open-source native CLI distribution. It does not
+include GenomeSketchHub hosted-service code, browser/wasm builds, private
+reference databases, sketch-cache infrastructure, manuscript material, research
+notebooks, deployment systems, or private maintenance scripts.
+
+The names KSSD3A, KSSD, GenomeSketchHub, associated logos, and service branding
+are not licensed for trademark use by the Apache License except as needed for
+reasonable description of the origin of the software. See
+[`TRADEMARKS.md`](TRADEMARKS.md).
+
+For commercial product boundaries and redistributor guidance, see
+[`COMMERCIAL.md`](COMMERCIAL.md). For contribution terms, see
+[`CONTRIBUTING.md`](CONTRIBUTING.md).

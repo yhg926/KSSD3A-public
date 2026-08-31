@@ -41,7 +41,8 @@ static struct argp_option opt_global[] = {
 
 static char doc_license[] = 
 "\n"
-		"  Copyright 2019 Huiguang Yi. All Rights Reservered.\n\n"
+  "Copyright 2019-2026 Huiguang Yi\n"
+  "SPDX-License-Identifier: Apache-2.0\n\n"
 
   "Licensed under the Apache License, Version 2.0 (the \"License\");\n"
   "you may not use this file except in compliance with the License.\n"
@@ -297,7 +298,6 @@ void cmd_global(int argc, char**argv)
   struct arg_global global = {  };
   argp_parse(&argp, argc, argv, ARGP_IN_ORDER, &argc, &global);
 }
-
 
 
 

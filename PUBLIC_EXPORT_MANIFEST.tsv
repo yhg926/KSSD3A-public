@@ -2,6 +2,10 @@ public_path
 .gitignore
 LICENSE.txt
 COPYRIGHT.txt
+NOTICE
+TRADEMARKS.md
+COMMERCIAL.md
+CONTRIBUTING.md
 README.md
 Makefile
 etc/kssd3a.bash

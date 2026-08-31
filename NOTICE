@@ -1,0 +1,28 @@
+KSSD3A
+Copyright 2019-2026 Huiguang Yi
+
+This product includes KSSD3A public CLI source code licensed under the
+Apache License, Version 2.0. See LICENSE.txt.
+
+This public repository is a minimal native command-line distribution. It does
+not include GenomeSketchHub hosted-service code, private reference databases,
+browser/wasm builds, manuscript material, research notebooks, deployment
+systems, or private maintenance scripts.
+
+Third-party components distributed in this repository:
+
+- klib headers and source files under klib/
+  Copyright (c) Attractive Chaos
+  Licensed under the MIT License, as stated in the file headers.
+
+- xxHash files under src/xxhash.h and src/xxh_x86dispatch.*
+  Copyright (C) Yann Collet
+  Licensed under the BSD 2-Clause License, as stated in the file headers.
+
+- MurmurHash3 files under src/MurmurHash3.*
+  Written by Austin Appleby and placed in the public domain, as stated in the
+  file headers.
+
+KSSD3A and GenomeSketchHub names, logos, and service branding are not licensed
+for trademark use by the Apache License except as needed for reasonable,
+customary description of the origin of this software. See TRADEMARKS.md.
