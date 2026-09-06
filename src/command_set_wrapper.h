@@ -22,10 +22,17 @@ typedef enum set_key_mode
   SET_KEY_CTX = 1
 } set_key_mode_t;
 
+typedef enum set_union_as_mode
+{
+  SET_UNION_AS_PAN = 0,
+  SET_UNION_AS_SKETCH = 1
+} set_union_as_mode_t;
+
 typedef struct set_opt
 {
   int operation;
   set_key_mode_t key_mode;
+  set_union_as_mode_t union_as;
   bool q2markerdb;
   int p;
   int P;

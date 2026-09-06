@@ -33,6 +33,8 @@ src/command_matrix.h
 src/command_matrix_wrapper.c
 src/command_operate.c
 src/command_operate.h
+src/command_place.c
+src/command_place.h
 src/command_progress.c
 src/command_progress.h
 src/command_reverse.c

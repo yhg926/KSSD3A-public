@@ -1099,6 +1099,19 @@ Union:
 kssd3a set --union -o union_sketch input_sketches
 ```
 
+By default, union writes a pan-sketch (`lpan`) for downstream set operations.
+For `-T` long sketches, use `--as sketch` when you want the union represented
+as one normal sample sketch:
+
+```bash
+kssd3a set --union --as sketch -o one_sample_union input_sketches
+```
+
+This output keeps the full context-object records and writes
+`comblco`, `comblco.index`, and `lcofiles.stat` with one sample. It can be used
+by downstream `ani` or `matrix` commands. It is a presence union; if the input
+sketch contains abundance counts, abundance is not merged into the output.
+
 Unique union:
 
 ```bash

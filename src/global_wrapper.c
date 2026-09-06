@@ -9,6 +9,7 @@
 #include "command_composite.h"
 #include "command_matrix.h"
 #include "command_ani.h"
+#include "command_place.h"
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -72,7 +73,8 @@ static char doc_global[] =
  			"  set      \tRun union, intersection, and subtraction on sketches.\n"
 "\n"
       "  ani      \tEstimate average nucleotide identity (ANI).\n"
-
+"\n"
+      "  place    \tPlace query sketches onto a species backbone tree (experimental).\n"
 "\n"
       "  examples\tPrint common command workflows.\n"
 
@@ -256,6 +258,8 @@ static error_t parse_global(int key, char* arg, struct argp_state* state)
 				cmd_matrix(state);
 	    else if(strcmp(arg, "ani") == 0)
         cmd_ani(state);
+      else if(strcmp(arg, "place") == 0)
+        cmd_place(state);
 			else if(strcmp(arg, "primer") == 0)
 					for(int i = 8;i<52;i++ )
 				 		printf("%llu\n",find_lgst_primer_2pow(i));

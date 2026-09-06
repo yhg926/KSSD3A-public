@@ -468,6 +468,7 @@ static bool matrix_write_indexed_self_matrix(const matrix_opt_t *opt,
 	ani_opt.ntop = -1;
 	ani_opt.e = (int)opt->e;
 	ani_opt.s = 4;
+	ani_opt.max_diff_obj_section = -1;
 
 	FILE *output = matrix_open_output(opt->outf);
 	kstring_t row = {0, 0, NULL};
@@ -821,6 +822,7 @@ static bool matrix_write_keep_matrix_indexed(const matrix_opt_t *opt,
 	ani_opt.ntop = -1;
 	ani_opt.e = (int)opt->e;
 	ani_opt.s = 4;
+	ani_opt.max_diff_obj_section = -1;
 
 	FILE *output = matrix_open_output(opt->keep_matrix_outf);
 	if (opt->keep_matrix_format == MATRIX_KEEP_MATRIX_PHYLIP) {

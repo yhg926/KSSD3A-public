@@ -49,7 +49,9 @@ enum
 	ANI_SKETCH_PIPECMD,
 	ANI_RAW_OUTPUT,
 	ANI_UNIFIED_METRIC,
-	ANI_ESTIMATE_COVERAGE
+	ANI_ESTIMATE_COVERAGE,
+	ANI_MAX_PDIST,
+	ANI_MAX_DIFF_OBJ_SECTION
 };
 
 enum
@@ -84,6 +86,8 @@ static struct argp_option opt_ani[] =
 		{"control", 'c', "<FLOAT>", 0, "Skip duplicated samples with distance below this value. [0]", ANI_GROUP_FILTER},
 		{"ctxcut", 't', "<INT>", 0, "Skip reports with overlapped context count below this value. [3]", ANI_GROUP_FILTER},
 		{"slmetrics", 's', "<+-1..9>", 0, "Metric: Best(1), Recalibrated(2), CtxMoE(3), Naive(4), MashD(5), AafD(6), MashD_if_far(7), AafD_if_far(8), p_dist(9). For unassembled/qraw, 1..4 use Naive. In matrix mode positive reports distance and negative reports ANI; detail prints both. [1]", ANI_GROUP_FILTER},
+		{"max-pdist", ANI_MAX_PDIST, "<FLOAT>", 0, "Close-only detail filter: skip reports with p_dist above this value and allow early stop during compatible scans. [off]", ANI_GROUP_FILTER},
+		{"max-diff-section", ANI_MAX_DIFF_OBJ_SECTION, "<INT>", 0, "Close-only detail filter: skip reports once object-section differences exceed this count. [off]", ANI_GROUP_FILTER},
 		{"unified-metric", ANI_UNIFIED_METRIC, 0, 0, "Expert: in unassembled/qraw mode, honor -s instead of forcing 1..4 to Naive; Best/Recalibrated still fall back when unavailable.", ANI_GROUP_FILTER},
 
 		{0, 0, 0, 0, "Reporting and output:", ANI_GROUP_REPORT},
@@ -167,6 +171,9 @@ ani_opt_t ani_opt = {
 	.ignoreconflict = 0,
 	.raw_output = 0,
 	.estimate_coverage = 0,
+	.max_pdist_set = false,
+	.max_pdist = 0.0,
+	.max_diff_obj_section = -1,
 	.ctxcut = 3,
 	.afcut = 0.5,
 	.afcut_set = false,
@@ -373,6 +380,17 @@ static error_t parse_ani(int key, char *arg, struct argp_state *state)
 		ani_opt.estimate_coverage = true;
 		break;
 	}
+	case ANI_MAX_PDIST:
+	{
+		ani_opt.max_pdist = parse_double_range(state, "--max-pdist", arg, 0.0, 1.0);
+		ani_opt.max_pdist_set = true;
+		break;
+	}
+	case ANI_MAX_DIFF_OBJ_SECTION:
+	{
+		ani_opt.max_diff_obj_section = parse_int_range(state, "--max-diff-section", arg, 0, INT_MAX);
+		break;
+	}
 	case 't':
 	{
 		ani_opt.ctxcut = parse_int_range(state, "-t/--ctxcut", arg, 0, INT_MAX);
@@ -486,6 +504,8 @@ static error_t parse_ani(int key, char *arg, struct argp_state *state)
 			argp_error(state, "--estimate-coverage is supported only with detail output (-m0).");
 		if (ani_opt.estimate_coverage && !ani_opt.unassembled)
 			argp_error(state, "--estimate-coverage currently requires --qraw raw/unassembled query mode.");
+		if ((ani_opt.max_pdist_set || ani_opt.max_diff_obj_section >= 0) && ani_opt.fmt != 0)
+			argp_error(state, "--max-pdist/--max-diff-section are supported only with detail output (-m0).");
 
 		if (has_reflist || has_qrylist)
 		{

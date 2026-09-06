@@ -3,6 +3,7 @@
 #include "command_operate.h"
 /*** argp wraper ***/
 #define SET_ARG_KEY_MODE 890
+#define SET_ARG_UNION_AS 891
 
 struct arg_set
 {
@@ -14,6 +15,7 @@ struct arg_set
 static struct argp_option opt_set[] =
 {
   {"union",'u', 0,  0, "Compute the union set of sketches.",1 },
+	{"as",SET_ARG_UNION_AS,"<pan|sketch>", 0, "Output type for --union. pan writes the current pan-sketch files; sketch writes a normal one-sample -T sketch. [pan]",1},
 	{"subtract",'s',"<pan>", 0,"Subtract the pan-sketch from each input sketch.",2 },
 	{"intsect",'i',"<pan>", 0, "Intersect each input sketch with the pan-sketch.",2},
 	{"intersect",334,"<pan>", 0, "Alias for --intsect.",2},
@@ -37,9 +39,11 @@ static char doc_set[] =
   "\v"
   "Choose one operation such as --union, --uniq_union, --intersect, --intsect, or --subtract.\n"
   "Use --key ctx with --intersect/--subtract on -T long sketches to match by context only while preserving original context-object records in output.\n"
+  "Use --union --as sketch to collapse a -T combined sketch into one normal one-sample sketch instead of an lpan pan-sketch.\n"
   "\n"
   "Examples:\n"
   "  kssd3a set --union -o union_sketch input_sketches\n"
+  "  kssd3a set --union --as sketch -o one_sample_union input_sketches\n"
   "  kssd3a set --uniq_union --markerdb -o markerdb input_sketches\n"
   "  kssd3a set --intersect pan_sketch --key ctx -o intersected input_sketches\n"
   "  kssd3a set --subtract pan_sketch --key ctx -o subtracted input_sketches"
@@ -49,6 +53,7 @@ static char doc_set[] =
 set_opt_t set_opt = {
 .operation = -1,//0:subtract,1:intersect,2 union, 3 uniq_union, 4 combin_pan
 .key_mode = SET_KEY_FULL,
+.union_as = SET_UNION_AS_PAN,
 .q2markerdb = 0, // when -q set, generate markerdb instead of uniq union set, only for lco sketch 
 .p = 1,
 .P = 0,
@@ -130,6 +135,16 @@ static error_t parse_set(int key, char* arg, struct argp_state* state) {
 				set_opt.key_mode = SET_KEY_CTX;
 			else
 				argp_error(state, "--key must be one of: full, ctx");
+			break;
+		}
+		case SET_ARG_UNION_AS:
+		{
+			if (strcmp(arg, "pan") == 0)
+				set_opt.union_as = SET_UNION_AS_PAN;
+			else if (strcmp(arg, "sketch") == 0)
+				set_opt.union_as = SET_UNION_AS_SKETCH;
+			else
+				argp_error(state, "--as must be one of: pan, sketch");
 			break;
 		}
 		case 'c':
@@ -234,9 +249,14 @@ int cmd_set(struct argp_state* state)
 	if(argc >1){	
 		if(set_opt.key_mode == SET_KEY_CTX && set_opt.operation != 0 && set_opt.operation != 1)
 			errx(EXIT_FAILURE, "--key ctx currently supports only --intersect/--intsect and --subtract");
+		if(set_opt.union_as == SET_UNION_AS_SKETCH && set_opt.operation != 2)
+			errx(EXIT_FAILURE, "--as sketch currently supports only --union");
 		if(set_opt.operation == 2){
-			if(file_exists_in_folder(set_opt.insketchpath,co_dstat) )
+			if(file_exists_in_folder(set_opt.insketchpath,co_dstat) ) {
+				if(set_opt.union_as == SET_UNION_AS_SKETCH)
+					errx(EXIT_FAILURE, "--union --as sketch currently supports only -T long sketches");
 				return sketch_union(&set_opt); 
+			}
 			else if(file_exists_in_folder(set_opt.insketchpath,sketch_stat))
 				return lsketch_union(&set_opt);			
 		}

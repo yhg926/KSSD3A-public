@@ -28,6 +28,9 @@ typedef struct ani_opt
 	bool ignoreconflict; // ignore reference contexts with conflicting objects
 	bool raw_output; // skip calibrated/best ANI; print NULLs in unified detail fields
 	bool estimate_coverage; // append abundance-derived coverage columns in detail output
+	bool max_pdist_set; // close-only detail output filter on p_dist
+	double max_pdist;
+	int max_diff_obj_section; // close-only detail output filter on raw object-section differences
 	int e;
 	int s; // select metrics;
 	int ntop; // report at most top N references for each query

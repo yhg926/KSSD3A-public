@@ -86,6 +86,19 @@ require_same_file() {
   fi
 }
 
+require_same_except_first_line() {
+  local a=$1
+  local b=$2
+  local aa="$WORKDIR/cmp_a_body.tsv"
+  local bb="$WORKDIR/cmp_b_body.tsv"
+  tail -n +2 "$a" > "$aa"
+  tail -n +2 "$b" > "$bb"
+  if ! cmp -s "$aa" "$bb"; then
+    printf 'smoke: expected %s and %s to match after removing the timing metadata line\n' "$a" "$b" >&2
+    exit 1
+  fi
+}
+
 require_same_tsv_except_first_col() {
   local a=$1
   local b=$2
@@ -633,6 +646,9 @@ run "$BIN" ani -r "$OUT/ref_sketch" -q "$OUT/read_sketch_noconflict" -f0 -n0 -m0
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$OUT/read_sketch" -f0 -n0 -m0 -o "$OUT/ani_qraw.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$OUT/read_sketch_abundance" -f0 -n0 -m0 --estimate-coverage -o "$OUT/ani_qraw_estcov.tsv"
 awk -F '\t' 'NR > 1 && $16 == "refdb_unique_ctxobj_bitset" { found = 1 } END { if (!found) exit 1 }' "$OUT/ani_qraw_estcov.tsv"
+run env KSSD3A_FORCE_REF_INDEX=1 KSSD3A_QRAW_MULTI=refindex "$BIN" ani -r "$OUT/ref_sketch" --qraw "$OUT/read_sketch_abundance" -f0 -n0 -m0 --estimate-coverage -o "$OUT/ani_qraw_estcov_force_refindex.tsv"
+awk -F '\t' 'NR > 1 && $16 == "refdb_unique_ctxobj_bitset" { found = 1 } END { if (!found) exit 1 }' "$OUT/ani_qraw_estcov_force_refindex.tsv"
+require_file_not_contains "$OUT/ani_qraw_estcov_force_refindex.tsv" "NA:not_computed"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$OUT/read_sketch" -f0 -n0 -m0 --estimate-coverage -o "$OUT/ani_qraw_estcov_noabundance.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq" -f0 -n0 -m0 -o "$OUT/ani_qraw_direct_fastq.tsv"
 run "$BIN" ani -r "$OUT/ref_sketch" --qraw "$READS/reads.fastq.gz" -f0 -n0 -m0 -o "$OUT/ani_qraw_direct_fastq_gz.tsv"
@@ -665,6 +681,7 @@ require_nonempty "$OUT/ani_query_conflict_sketch.tsv"
 require_nonempty "$OUT/ani_query_noconflict_sketch.tsv"
 require_nonempty "$OUT/ani_qraw.tsv"
 require_nonempty "$OUT/ani_qraw_estcov.tsv"
+require_nonempty "$OUT/ani_qraw_estcov_force_refindex.tsv"
 require_nonempty "$OUT/ani_qraw_estcov_noabundance.tsv"
 require_nonempty "$OUT/ani_qraw_direct_fastq.tsv"
 require_nonempty "$OUT/ani_qraw_direct_fastq_gz.tsv"
@@ -690,7 +707,10 @@ require_header_has "$OUT/ani_auto_stdin.tsv" Selected_metric
 require_header_has "$OUT/ani_auto_pipecmd.tsv" Selected_metric
 require_header_has "$OUT/ani_qraw_estcov.tsv" Estimated_depth
 require_header_has "$OUT/ani_qraw_estcov.tsv" Estimated_abundance_fraction
+require_header_has "$OUT/ani_qraw_estcov_force_refindex.tsv" Estimated_depth
+require_header_has "$OUT/ani_qraw_estcov_force_refindex.tsv" Estimated_abundance_fraction
 require_file_contains "$OUT/ani_qraw_estcov.tsv" "refdb_unique_ctxobj_bitset"
+require_file_contains "$OUT/ani_qraw_estcov_force_refindex.tsv" "refdb_unique_ctxobj_bitset"
 require_file_contains "$OUT/ani_qraw_estcov_noabundance.tsv" "NA:query_missing_comblco.a"
 for ani_tsv in \
   "$OUT/ani_detail.tsv" \
@@ -698,6 +718,7 @@ for ani_tsv in \
   "$OUT/ani_query_noconflict_sketch.tsv" \
   "$OUT/ani_qraw.tsv" \
   "$OUT/ani_qraw_estcov.tsv" \
+  "$OUT/ani_qraw_estcov_force_refindex.tsv" \
   "$OUT/ani_qraw_estcov_noabundance.tsv" \
   "$OUT/ani_qraw_direct_fastq.tsv" \
   "$OUT/ani_qraw_direct_fastq_gz.tsv" \
@@ -737,12 +758,20 @@ awk -F '\t' -v refa="$REFS/refA.fna" -v refb="$REFS/refB.fna" \
 ' "$OUT/matrix_dist.tsv"
 
 run "$BIN" set --union -o "$OUT/union_sketch" "$OUT/ref_sketch"
+run "$BIN" set --union --as sketch -o "$OUT/union_as_sketch" "$OUT/ref_sketch"
 run "$BIN" set --uniq_union -o "$OUT/uniq_union" "$OUT/ref_sketch"
 run "$BIN" set --uniq_union --markerdb -o "$OUT/markerdb" "$OUT/ref_sketch"
 require_nonempty "$OUT/union_sketch/lpan"
+require_nonempty "$OUT/union_as_sketch/comblco"
+require_nonempty "$OUT/union_as_sketch/comblco.index"
+require_nonempty "$OUT/union_as_sketch/lcofiles.stat"
 require_nonempty "$OUT/uniq_union/luniq_pan"
 require_nonempty "$OUT/markerdb/comblco"
 require_nonempty "$OUT/markerdb/comblco.index"
+run "$BIN" set -P "$OUT/union_as_sketch" > "$OUT/union_as_sketch.samples.tsv"
+require_file_contains "$OUT/union_as_sketch.samples.tsv" "union_as_sketch"
+run "$BIN" matrix -r "$OUT/union_as_sketch" -q "$OUT/qry_sketch" --format full --metric p_dist -o "$OUT/union_as_sketch.matrix.tsv"
+require_nonempty "$OUT/union_as_sketch.matrix.tsv"
 run "$BIN" set --intersect "$OUT/union_sketch" --key ctx -o "$OUT/intersect_ctx" "$OUT/qry_sketch"
 run "$BIN" set --subtract "$OUT/union_sketch" --key ctx -o "$OUT/subtract_ctx" "$OUT/qry_sketch"
 require_nonempty "$OUT/intersect_ctx/comblco"
@@ -776,5 +805,91 @@ run "$BIN" composite -r "$OUT/markerdb" -q "$OUT/qry_abundance" -o "$OUT/composi
 require_nonempty "$OUT/qry_abundance/comblco.a"
 require_nonempty "$OUT/qry_abundance_inferred_qc/lcofiles.qc"
 require_nonempty "$OUT/composite_profile.tsv"
+
+
+printf '%s\n' '(A:1,(B:1,C:1):1);' > "$OUT/place_tree.nwk"
+printf '%s\n' 'ID	Sample' 'A	A' 'B	B' 'C	C' > "$OUT/place_idmap.tsv"
+printf '%s\n' 'Qry	Ref	Distance' \
+  'q1	A	0.3' 'q1	B	2.9' 'q1	C	2.9' \
+  'q2	A	0.9' 'q2	B	2.5' 'q2	C	2.5' > "$OUT/place_dist.tsv"
+printf '%s\n' '	A	B	C' \
+  'q1	0.3	2.9	2.9' \
+  'q2	0.9	2.5	2.5' > "$OUT/place_dist_matrix.tsv"
+cat > "$OUT/place_dist_phylip.phy" <<'EOF_PLACE_PHYLIP'
+5
+A 0 1 2 0.3 0.9
+B 1 0 1 2.9 2.5
+C 2 1 0 2.9 2.5
+q1 0.3 2.9 2.9 0 0.8
+q2 0.9 2.5 2.5 0.8 0
+EOF_PLACE_PHYLIP
+run "$BIN" place \
+  --tree "$OUT/place_tree.nwk" \
+  --idmap "$OUT/place_idmap.tsv" \
+  --distances "$OUT/place_dist.tsv" \
+  --out "$OUT/place.tsv" \
+  --jplace-out "$OUT/place.jplace" \
+  --pairwise-out "$OUT/place_pairwise.tsv" \
+  --top 1 \
+  --threads 1
+require_line_count "$OUT/place.tsv" 4
+awk -F '\t' '
+  NR == 2 && ($12 != "wls_delta" || $14 != "wls_rel_weight" || $32 != "warnings") {
+    printf "smoke: place header missing confidence/warning columns\n" > "/dev/stderr"
+    exit 1
+  }
+  NR > 2 && NF != 32 {
+    printf "smoke: place output expected 32 fields at line %d, got %d\n", NR, NF > "/dev/stderr"
+    exit 1
+  }
+' "$OUT/place.tsv"
+require_file_contains "$OUT/place.tsv" "q1	1	wls"
+require_nonempty "$OUT/place.jplace"
+python3 -m json.tool "$OUT/place.jplace" > /dev/null
+require_file_contains "$OUT/place.jplace" '"edge_num"'
+require_line_count "$OUT/place_pairwise.tsv" 2
+awk -F '\t' '
+  NR == 2 {
+    d = $4 + 0
+    if ($3 != "ok" || $8 != 1 || $9 != 1 || d < 0.799999999 || d > 0.800000001) {
+      printf "smoke: unexpected place pairwise row: %s\n", $0 > "/dev/stderr"
+      exit 1
+    }
+  }
+' "$OUT/place_pairwise.tsv"
+run "$BIN" place \
+  --tree "$OUT/place_tree.nwk" \
+  --idmap "$OUT/place_idmap.tsv" \
+  --distances "$OUT/place_dist_matrix.tsv" \
+  --distance-format matrix \
+  --out "$OUT/place_matrix.tsv" \
+  --jplace-out "$OUT/place_matrix.jplace" \
+  --pairwise-out "$OUT/place_matrix_pairwise.tsv" \
+  --top 1 \
+  --threads 1
+require_same_except_first_line "$OUT/place.tsv" "$OUT/place_matrix.tsv"
+require_same_file "$OUT/place_pairwise.tsv" "$OUT/place_matrix_pairwise.tsv"
+python3 -m json.tool "$OUT/place_matrix.jplace" > /dev/null
+run "$BIN" place \
+  --tree "$OUT/place_tree.nwk" \
+  --idmap "$OUT/place_idmap.tsv" \
+  --distances "$OUT/place_dist_matrix.tsv" \
+  --out "$OUT/place_matrix_auto.tsv" \
+  --top 1 \
+  --threads 1
+require_same_except_first_line "$OUT/place.tsv" "$OUT/place_matrix_auto.tsv"
+run "$BIN" place \
+  --tree "$OUT/place_tree.nwk" \
+  --idmap "$OUT/place_idmap.tsv" \
+  --distances "$OUT/place_dist_phylip.phy" \
+  --distance-format phylip \
+  --out "$OUT/place_phylip.tsv" \
+  --jplace-out "$OUT/place_phylip.jplace" \
+  --pairwise-out "$OUT/place_phylip_pairwise.tsv" \
+  --top 1 \
+  --threads 1
+require_same_except_first_line "$OUT/place.tsv" "$OUT/place_phylip.tsv"
+require_same_file "$OUT/place_pairwise.tsv" "$OUT/place_phylip_pairwise.tsv"
+python3 -m json.tool "$OUT/place_phylip.jplace" > /dev/null
 
 printf 'smoke: all main CLI checks passed\n' >&2

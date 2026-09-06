@@ -31,8 +31,43 @@
 const char gid_obj_prefix[] = "gidobj", ctx_idx_prefix[] = "ctx.index";
 extern const char sorted_comb_ctxgid64obj32[];
 extern const char combined_unique_bits_suffix[];
+extern const char combined_ab_suffix[];
 extern double C9O7_98[6], C9O7_96[6];
 size_t file_size;
+
+typedef struct {
+    uint32_t rn;
+    uint64_t begin;
+    uint64_t *keys;
+    size_t n;
+} coverage_ref_slice_t;
+
+typedef struct {
+    uint8_t *bits;
+    size_t bytes;
+    uint64_t entries;
+    ctxgidobj_t *sorted;
+    size_t sorted_bytes;
+    bool sorted_is_mmap;
+    bool available;
+} coverage_unique_bits_t;
+
+static coverage_unique_bits_t load_coverage_unique_bits(const char *refdir, uint64_t ref_entries);
+static void free_coverage_unique_bits(coverage_unique_bits_t *idx);
+static void ani_block_print_internal(
+	int ref_infile_num, int qry_gid_offset, int this_block_size,
+	uint64_t *ref_sketch_index, uint64_t *qry_sketch_index,
+	const uint32_t *ref_ctx_count, const uint32_t *qry_ctx_count,
+	ctx_mut2_t *ctx, obj_section_t *obj,
+	char (*refname)[PATHLEN], char (*qryfname)[PATHLEN],
+	char (*refanno)[PATHLEN],
+	const infile_meta_t *qry_infile_meta,
+	const infile_meta_t *ref_infile_meta,
+	uint32_t *num_passid_block, idani_t **sort_idani_block,
+	FILE *outfp, ani_opt_t *ani_opt, int matrix_mode,
+	FILE *ref_cov_fp, const coverage_unique_bits_t *ref_unique_bits,
+	const uint64_t *qry_block_keys, uint64_t qry_block_base,
+	const uint32_t *qry_abundance);
 
 const char unified_detail_header[] = "Qry\tRef\tANI\tDistance\tConfidence\tSelected_metric\tXnY_ctx\tQry_align_fraction\tblastn_Qry_align_fraction\tRef_align_fraction\tblastn_Ref_align_fraction\tN_diff_obj\tN_diff_obj_section\tN_mut2_ctx\tRef_annotation";
 const char coverage_detail_header[] = "Coverage_estimator\tCoverage_ref_markers\tCoverage_observed_markers\tCoverage_observed_fraction\tCoverage_count_sum\tEstimated_depth\tPositive_mean_depth\tPositive_median_depth\tCount_CV\tEstimated_abundance_mass\tEstimated_abundance_fraction\tAbundance_fraction_scope";
@@ -333,6 +368,17 @@ static uint32_t *ref_ctx_counts_from_ctxgidobj(const ctxgidobj_t *arr, size_t ar
 	return counts;
 }
 
+static uint32_t *ref_ctx_counts_from_sketch_index(int ref_infile_num,
+												  const uint64_t *ref_sketch_index)
+{
+	uint32_t *counts = calloc((size_t)ref_infile_num, sizeof(*counts));
+	if (!counts)
+		err(EXIT_FAILURE, "%s(): calloc counts", __func__);
+	for (int gid = 0; gid < ref_infile_num; gid++)
+		counts[gid] = (uint32_t)(ref_sketch_index[gid + 1] - ref_sketch_index[gid]);
+	return counts;
+}
+
 static void fill_ctx_counts_for_query_block(uint32_t *qry_ctx_count, int offset_gid, int this_block_size,
 											const uint64_t *qry_sketch_index, const uint64_t *tmp_ctxobj,
 											bool qry_conflict)
@@ -364,18 +410,42 @@ int mem_eff_sorted_ctxgidobj_arrXcomb_sortedsketch64(ani_opt_t *ani_opt)
 	uint64_t *ref_sketch_index = read_from_file(test_get_fullpath(ani_opt->refdir, idx_sketch_suffix), &file_size);
 	assert(file_size == (ref_infile_num + 1) * sizeof(ref_sketch_index[0]));
 	size_t ref_sketch_size = ref_sketch_index[ref_infile_num];
+	coverage_unique_bits_t ref_unique_bits;
+	memset(&ref_unique_bits, 0, sizeof(ref_unique_bits));
+	if (ani_opt->estimate_coverage)
+		ref_unique_bits = load_coverage_unique_bits(ani_opt->refdir, ref_sketch_size);
 	char *sorted_index_path = test_get_fullpath(ani_opt->refdir, sorted_comb_ctxgid64obj32);
 	bool sorted_index_is_mmap = false;
 	ctxgidobj_t *sortedcomb_ctxgid64obj32 = read_reference_sorted_index(sorted_index_path, &ctxgidobj_arr_fsize, &sorted_index_is_mmap);
 	free(sorted_index_path);
 	assert(ctxgidobj_arr_fsize == ref_sketch_size * sizeof(sortedcomb_ctxgid64obj32[0]));
-	uint32_t *ref_ctx_count = ref_ctx_counts_from_ctxgidobj(sortedcomb_ctxgid64obj32, ref_sketch_size, ref_infile_num, ref_sketch_index, ani_opt->ignoreconflict);
+	uint32_t *ref_ctx_count = ref_dim_sketch_stat->conflict
+		? ref_ctx_counts_from_ctxgidobj(sortedcomb_ctxgid64obj32, ref_sketch_size, ref_infile_num, ref_sketch_index, ani_opt->ignoreconflict)
+		: ref_ctx_counts_from_sketch_index(ref_infile_num, ref_sketch_index);
 
 	dim_sketch_stat_t *qry_dim_sketch_stat = read_from_file(test_get_fullpath(ani_opt->qrydir, sketch_stat), &file_size);
 	int qry_infile_num = qry_dim_sketch_stat->infile_num;
 	assert(qry_dim_sketch_stat->hash_id == ref_dim_sketch_stat->hash_id);
 	uint64_t *qry_sketch_index = read_from_file(test_get_fullpath(ani_opt->qrydir, idx_sketch_suffix), &file_size);
 	size_t qry_sketch_size = qry_sketch_index[qry_infile_num];
+	size_t qry_abundance_size = 0;
+	uint32_t *qry_abundance = NULL;
+	if (ani_opt->estimate_coverage && file_exists_in_folder(ani_opt->qrydir, combined_ab_suffix))
+	{
+		char *qry_abundance_path = test_get_fullpath(ani_opt->qrydir, combined_ab_suffix);
+		qry_abundance = read_from_file(qry_abundance_path, &qry_abundance_size);
+		free(qry_abundance_path);
+		const size_t expected_abundance_size = qry_sketch_size * sizeof(qry_abundance[0]);
+		if (qry_abundance_size != expected_abundance_size)
+		{
+			warnx("%s(): ignoring %s/%s: %zu bytes, expected %zu",
+				  __func__, ani_opt->qrydir, combined_ab_suffix,
+				  qry_abundance_size, expected_abundance_size);
+			free_read_from_file(qry_abundance, qry_abundance_size);
+			qry_abundance = NULL;
+			qry_abundance_size = 0;
+		}
+	}
 	uint32_t *qry_ctx_count = calloc((size_t)qry_infile_num, sizeof(*qry_ctx_count));
 	if (!qry_ctx_count)
 		err(EXIT_FAILURE, "%s(): calloc qry_ctx_count", __func__);
@@ -410,6 +480,15 @@ int mem_eff_sorted_ctxgidobj_arrXcomb_sortedsketch64(ani_opt_t *ani_opt)
 	FILE *outfp = ani_opt->outf[0] == '\0' ? stdout : fopen(ani_opt->outf, "w");
 	if (outfp == NULL)
 		err(errno, "%s", ani_opt->outf);
+	FILE *ref_cov_fp = NULL;
+	if (ani_opt->estimate_coverage)
+	{
+		char *ref_comb_path = test_get_fullpath(ani_opt->refdir, combined_sketch_suffix);
+		ref_cov_fp = fopen(ref_comb_path, "rb");
+		if (!ref_cov_fp)
+			err(errno, "%s", ref_comb_path);
+		free(ref_comb_path);
+	}
 
 	/* load model
 	if (ani_opt->model[0] == '\0')
@@ -450,7 +529,7 @@ int mem_eff_sorted_ctxgidobj_arrXcomb_sortedsketch64(ani_opt_t *ani_opt)
 		memset(ctx, 0, ref_infile_num * block_size * sizeof(ctx_mut2_t));
 		memset(obj, 0, ref_infile_num * block_size * sizeof(obj_section_t)); // memset(obj,0,ref_infile_num * block_size * sizeof(uint32_t));
 		count_ctx_obj_frm_comb_sketch_section(ctx, obj, sortedcomb_ctxgid64obj32, ref_sketch_size, ref_infile_num, ref_ctx_count, qry_ctx_count + offset_gid, this_block_size, tmp_ctxobj, this_sketch_index, num_passid_block, sort_idani_block, ani_opt);
-		ani_block_print(ref_infile_num, offset_gid, this_block_size, ref_sketch_index, qry_sketch_index, ref_ctx_count, qry_ctx_count, ctx, obj, refname, qryname, refanno, qry_infile_meta, ref_infile_meta, num_passid_block, sort_idani_block, outfp, ani_opt, ani_opt->fmt);
+		ani_block_print_internal(ref_infile_num, offset_gid, this_block_size, ref_sketch_index, qry_sketch_index, ref_ctx_count, qry_ctx_count, ctx, obj, refname, qryname, refanno, qry_infile_meta, ref_infile_meta, num_passid_block, sort_idani_block, outfp, ani_opt, ani_opt->fmt, ref_cov_fp, &ref_unique_bits, tmp_ctxobj, qry_sketch_index[offset_gid], qry_abundance);
 
 		offset_gid += this_block_size;
 	}
@@ -463,6 +542,11 @@ int mem_eff_sorted_ctxgidobj_arrXcomb_sortedsketch64(ani_opt_t *ani_opt)
 		free_read_from_file(qry_infile_meta, (size_t)qry_infile_num * sizeof(qry_infile_meta[0]));
 	if (ref_infile_meta)
 		free_read_from_file(ref_infile_meta, (size_t)ref_infile_num * sizeof(ref_infile_meta[0]));
+	if (ref_cov_fp)
+		fclose(ref_cov_fp);
+	free_coverage_unique_bits(&ref_unique_bits);
+	if (qry_abundance)
+		free_read_from_file(qry_abundance, qry_abundance_size);
 	free_all(ref_dim_sketch_stat, ref_sketch_index, ref_ctx_count, qry_dim_sketch_stat, qry_sketch_index, qry_ctx_count, tmp_ctxobj, ctx, obj, num_passid_block, sort_idani_block, NULL);
 	free_reference_sorted_index(sortedcomb_ctxgid64obj32, ctxgidobj_arr_fsize, sorted_index_is_mmap);
 	fclose(fp);
@@ -968,6 +1052,55 @@ static inline bool ani_value_available(double value)
 	return value > 0.0 && value <= 1.0;
 }
 
+static inline double ani_object_positions_per_ctx(void)
+{
+	return Bitslen.obj > 0 ? ((double)Bitslen.obj / 2.0) : 0.0;
+}
+
+static inline bool ani_close_filter_enabled(const ani_opt_t *ani_opt)
+{
+	return ani_opt && (ani_opt->max_pdist_set || ani_opt->max_diff_obj_section >= 0);
+}
+
+static inline bool ani_close_filter_impossible(const ani_opt_t *ani_opt,
+											   uint32_t diff_sections,
+											   uint32_t max_possible_shared_ctx)
+{
+	if (!ani_close_filter_enabled(ani_opt))
+		return false;
+
+	double limit = INFINITY;
+	if (ani_opt->max_diff_obj_section >= 0)
+		limit = (double)ani_opt->max_diff_obj_section;
+	if (ani_opt->max_pdist_set) {
+		const double obj_positions = ani_object_positions_per_ctx();
+		if (obj_positions <= 0.0)
+			return diff_sections > 0;
+		const double pdist_limit = ani_opt->max_pdist *
+								   (double)max_possible_shared_ctx *
+								   obj_positions;
+		if (pdist_limit < limit)
+			limit = pdist_limit;
+	}
+	return (double)diff_sections > floor(limit + 1e-12);
+}
+
+static inline bool ani_row_passes_close_filter(const ani_row_t *row,
+											   const ani_opt_t *ani_opt)
+{
+	if (!ani_close_filter_enabled(ani_opt))
+		return true;
+	if (!row)
+		return false;
+	if (ani_opt->max_diff_obj_section >= 0 &&
+		row->N_diff_obj_section > ani_opt->max_diff_obj_section)
+		return false;
+	if (ani_opt->max_pdist_set &&
+		(!isfinite(row->p_dist) || row->p_dist > ani_opt->max_pdist))
+		return false;
+	return true;
+}
+
 static inline bool row_best_available(const ani_row_t *row, const ani_opt_t *ani_opt)
 {
 	return row && ani_opt && !ani_opt->raw_output && !ani_opt->unassembled &&
@@ -1107,6 +1240,9 @@ static inline void append_unified_detail_row(kstring_t *ks_out,
                                              const ani_row_t *r,
                                              const char *annotation)
 {
+	if (!ani_row_passes_close_filter(r, ani_opt))
+		return;
+
     const double selected_distance = r->metric;
     const double selected_similarity = r->selected_ani;
     const char *metric_name = selected_metric_name_for_row(r, ani_opt);
@@ -1886,6 +2022,9 @@ static int compute_streamed_ref_row_one_qry(
             f.N_diff_obj_section += min_diff;
             if (min_diff > 1)
                 f.N_mut2_ctx++;
+            if (ani_close_filter_impossible(opt, f.N_diff_obj_section,
+                                            (uint32_t)f.XnY_ctx + (ref_ctx_total - ref_ctx)))
+                return 0;
         }
     }
 
@@ -1908,28 +2047,13 @@ static int compute_streamed_ref_row_one_qry(
     ani_row_t row = make_selected_output_row(rn, &f, opt, qry_ctx, ref_ctx,
                                              af_q, blastn_af_q, af_r, blastn_af_r,
                                              qry_asm, ref_asm);
+    if (!ani_row_passes_close_filter(&row, opt))
+        return 0;
     if (row.selected_ani < opt->anicut)
         return 0;
     *row_out = row;
     return 1;
 }
-
-typedef struct {
-    uint32_t rn;
-    uint64_t begin;
-    uint64_t *keys;
-    size_t n;
-} coverage_ref_slice_t;
-
-typedef struct {
-    uint8_t *bits;
-    size_t bytes;
-    uint64_t entries;
-    ctxgidobj_t *sorted;
-    size_t sorted_bytes;
-    bool sorted_is_mmap;
-    bool available;
-} coverage_unique_bits_t;
 
 static inline bool coverage_unique_bitset_get(const coverage_unique_bits_t *idx, uint64_t pos)
 {
@@ -2043,10 +2167,11 @@ static int compare_u32_local(const void *a, const void *b)
     return (av > bv) - (av < bv);
 }
 
-static void populate_selected_coverage_for_query(
+static void populate_selected_coverage_for_query_arrays(
     const ani_opt_t *ani_opt,
-    const unify_sketch_t *qry,
-    uint32_t qid,
+    const uint64_t *q_keys,
+    const uint32_t *q_counts,
+    size_t q_n,
     FILE *ref_fp,
     const uint64_t *ref_idx,
     const coverage_unique_bits_t *ref_unique_bits,
@@ -2056,7 +2181,7 @@ static void populate_selected_coverage_for_query(
     if (!ani_opt || !ani_opt->estimate_coverage || !rows || n_rows == 0)
         return;
 
-    if (!qry || !qry->abundance || qid >= (uint32_t)qry->infile_num) {
+    if (!q_keys || !q_counts) {
         for (size_t i = 0; i < n_rows; ++i)
             rows[i].coverage_status = 2;
         return;
@@ -2109,11 +2234,6 @@ static void populate_selected_coverage_for_query(
             qsort(all_keys, total_keys, sizeof(all_keys[0]), qsort_comparator_uint64);
     }
 
-    const size_t q_begin = (size_t)qry->sketch_index[qid];
-    const size_t q_end = (size_t)qry->sketch_index[qid + 1];
-    const uint64_t *q_keys = qry->comb_sketch + q_begin;
-    const uint32_t *q_counts = qry->abundance + q_begin;
-    const size_t q_n = q_end - q_begin;
     const uint8_t nobjbits = Bitslen.obj;
     const uint64_t objmask = (nobjbits == 64) ? UINT64_MAX : ((1ULL << nobjbits) - 1ULL);
 
@@ -2187,6 +2307,39 @@ static void populate_selected_coverage_for_query(
         free(slices[i].keys);
     free(slices);
     free(all_keys);
+}
+
+static void populate_selected_coverage_for_query(
+    const ani_opt_t *ani_opt,
+    const unify_sketch_t *qry,
+    uint32_t qid,
+    FILE *ref_fp,
+    const uint64_t *ref_idx,
+    const coverage_unique_bits_t *ref_unique_bits,
+    ani_row_t *rows,
+    size_t n_rows)
+{
+    if (!ani_opt || !ani_opt->estimate_coverage || !rows || n_rows == 0)
+        return;
+
+    if (!qry || !qry->abundance || qid >= (uint32_t)qry->infile_num) {
+        for (size_t i = 0; i < n_rows; ++i)
+            rows[i].coverage_status = 2;
+        return;
+    }
+
+    const size_t q_begin = (size_t)qry->sketch_index[qid];
+    const size_t q_end = (size_t)qry->sketch_index[qid + 1];
+    populate_selected_coverage_for_query_arrays(
+        ani_opt,
+        qry->comb_sketch + q_begin,
+        qry->abundance + q_begin,
+        q_end - q_begin,
+        ref_fp,
+        ref_idx,
+        ref_unique_bits,
+        rows,
+        n_rows);
 }
 
 int stream_ref_sketches_one_qraw_lookup(ani_opt_t *ani_opt)
@@ -3136,7 +3289,7 @@ size_t *find_first_occurrences_AT_ctxgidobj_arr(const uint64_t *a, size_t a_size
 	return indices;
 }
 
-void ani_block_print(
+static void ani_block_print_internal(
 	int ref_infile_num, int qry_gid_offset, int this_block_size,
 	uint64_t *ref_sketch_index, uint64_t *qry_sketch_index,
 	const uint32_t *ref_ctx_count, const uint32_t *qry_ctx_count,
@@ -3146,14 +3299,22 @@ void ani_block_print(
 	const infile_meta_t *qry_infile_meta,
 	const infile_meta_t *ref_infile_meta,
 	uint32_t *num_passid_block, idani_t **sort_idani_block,
-	FILE *outfp, ani_opt_t *ani_opt, int matrix_mode)
+	FILE *outfp, ani_opt_t *ani_opt, int matrix_mode,
+	FILE *ref_cov_fp, const coverage_unique_bits_t *ref_unique_bits,
+	const uint64_t *qry_block_keys, uint64_t qry_block_base,
+	const uint32_t *qry_abundance)
 {
 	ani_features_t ani_features;
+	const bool coverage_enabled =
+		!matrix_mode && ani_opt && ani_opt->estimate_coverage && ref_cov_fp;
 
 	for (int i = 0; i < this_block_size; i++)
 	{
 		int qry_gid = qry_gid_offset + i;
 		int qry_sketch_size = qry_ctx_count[qry_gid];
+		kv_ani_row_t coverage_rows;
+		if (coverage_enabled)
+			kv_init(coverage_rows);
 
 		if (matrix_mode)
 		{
@@ -3201,15 +3362,62 @@ void ani_block_print(
 				}
 				else if (outrow.selected_ani >= ani_opt->anicut)
 				{
-					print_unified_detail_row(outfp, ani_opt, qryfname[qry_gid], refname[j],
-											 &outrow, annotation_at(refanno, (uint32_t)j));
+					if (coverage_enabled)
+						kv_push(ani_row_t, coverage_rows, outrow);
+					else
+						print_unified_detail_row(outfp, ani_opt, qryfname[qry_gid], refname[j],
+												 &outrow, annotation_at(refanno, (uint32_t)j));
 				}
+		}
+		if (coverage_enabled)
+		{
+			if (kv_size(coverage_rows))
+			{
+				const uint64_t q_begin_abs = qry_sketch_index[qry_gid];
+				const uint64_t q_end_abs = qry_sketch_index[qry_gid + 1];
+				const uint64_t q_local_begin = q_begin_abs - qry_block_base;
+				const uint64_t q_n = q_end_abs - q_begin_abs;
+				const uint64_t *q_keys = qry_block_keys ? qry_block_keys + (size_t)q_local_begin : NULL;
+				const uint32_t *q_counts = qry_abundance ? qry_abundance + (size_t)q_begin_abs : NULL;
+				populate_selected_coverage_for_query_arrays(
+					ani_opt, q_keys, q_counts, (size_t)q_n, ref_cov_fp, ref_sketch_index,
+					ref_unique_bits, &kv_A(coverage_rows, 0), kv_size(coverage_rows));
+				for (size_t r = 0; r < kv_size(coverage_rows); ++r)
+				{
+					const ani_row_t *outrow = &kv_A(coverage_rows, r);
+					print_unified_detail_row(outfp, ani_opt, qryfname[qry_gid], refname[outrow->rn],
+											 outrow, annotation_at(refanno, outrow->rn));
+				}
+			}
+			kv_destroy(coverage_rows);
 		}
 		if (matrix_mode)
 		{
 			fprintf(outfp, "\n");
 		}
 	}
+}
+
+void ani_block_print(
+	int ref_infile_num, int qry_gid_offset, int this_block_size,
+	uint64_t *ref_sketch_index, uint64_t *qry_sketch_index,
+	const uint32_t *ref_ctx_count, const uint32_t *qry_ctx_count,
+	ctx_mut2_t *ctx, obj_section_t *obj,
+	char (*refname)[PATHLEN], char (*qryfname)[PATHLEN],
+	char (*refanno)[PATHLEN],
+	const infile_meta_t *qry_infile_meta,
+	const infile_meta_t *ref_infile_meta,
+	uint32_t *num_passid_block, idani_t **sort_idani_block,
+	FILE *outfp, ani_opt_t *ani_opt, int matrix_mode)
+{
+	ani_block_print_internal(ref_infile_num, qry_gid_offset, this_block_size,
+							 ref_sketch_index, qry_sketch_index,
+							 ref_ctx_count, qry_ctx_count,
+							 ctx, obj, refname, qryfname, refanno,
+							 qry_infile_meta, ref_infile_meta,
+							 num_passid_block, sort_idani_block,
+							 outfp, ani_opt, matrix_mode,
+							 NULL, NULL, NULL, 0, NULL);
 }
 
 void simple_sortedsketch64Xcomb_sortedsketch64(simple_sketch_t *simple_sketch, infile_tab_t *genomes_infiletab, ani_opt_t *ani_opt)
@@ -3478,6 +3686,7 @@ static inline int get_features_scan_b_hash_a(
     const ctxrun_ht_t *ht,                    // built from a
 	uint32_t need_X,                          // ceil(afcut * min(query ctx count, reference ctx count))
     bool ignore_ref_conflict,
+    const ani_opt_t *ani_opt,
     ani_features_t *f)
 {
     const uint8_t  nobjbits = Bitslen.obj;
@@ -3512,6 +3721,9 @@ static inline int get_features_scan_b_hash_a(
             f->N_diff_obj++;
             f->N_diff_obj_section += min_diff;
             if (min_diff > 1) f->N_mut2_ctx++;
+            if (ani_close_filter_impossible(ani_opt, f->N_diff_obj_section,
+                                            (uint32_t)f->XnY_ctx + (m - j)))
+                return 0;
         }
     }
 
@@ -3572,11 +3784,13 @@ void comb_manysmall_sortedsketch64Xcomb_fewlarge_sortedsketch64_filter_and_sort_
                 if (m_ctx == 0 || n_ctx == 0)
                     continue;
 
-				const uint32_t need_X = ani_report_af_needed_ctx(ani_opt, n_ctx, m_ctx);
+                const uint32_t need_X = ani_report_af_needed_ctx(ani_opt, n_ctx, m_ctx);
 
                 ani_features_t f;
-                get_features_scan_b_hash_a(a, n, b, m, &ht, need_X, ani_opt->ignoreconflict && ref->conflict, &f);
-                if (f.XnY_ctx < need_X) continue;
+                if (!get_features_scan_b_hash_a(a, n, b, m, &ht, need_X,
+                                                ani_opt->ignoreconflict && ref->conflict,
+                                                ani_opt, &f))
+                    continue;
 
                 const double af_q = (double)f.XnY_ctx / (double)n_ctx;
                 const double af_r = (double)f.XnY_ctx / (double)m_ctx;
@@ -3593,6 +3807,7 @@ void comb_manysmall_sortedsketch64Xcomb_fewlarge_sortedsketch64_filter_and_sort_
 	                row = make_selected_output_row(rn, &f, ani_opt, n_ctx, m_ctx,
 	                                               af_q, blastn_af_q, af_r, blastn_af_r,
 	                                               infile_meta_at(qry, qn), infile_meta_at(ref, rn));
+	                if (!ani_row_passes_close_filter(&row, ani_opt)) continue;
 	                if (row.selected_ani <= ani_opt->anicut) continue;
 
 	                kv_push(ani_row_t, tls[tid], row);

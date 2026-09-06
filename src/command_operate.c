@@ -40,6 +40,75 @@ static void copy_lsketch_annotations(const char *indir, const char *outdir, int 
 	free_read_from_file(annotations, anno_file_size);
 }
 
+static void require_no_stale_union_as_sketch_file(const char *outdir, const char *filename)
+{
+	char path[PATHLEN + 64];
+	snprintf(path, sizeof(path), "%s/%s", outdir, filename);
+	if (access(path, F_OK) == 0)
+		errx(EXIT_FAILURE,
+			 "%s(): refusing to write --union --as sketch into %s because stale %s exists; use a fresh -o directory",
+			 __func__, outdir, filename);
+	if (errno != ENOENT)
+		err(errno, "%s(): check stale %s", __func__, path);
+	errno = 0;
+}
+
+static void basename_into_sample_name(const char *path, char sample_name[PATHLEN])
+{
+	const char *end = path + strlen(path);
+	while (end > path && end[-1] == '/')
+		--end;
+	const char *base = end;
+	while (base > path && base[-1] != '/')
+		--base;
+	size_t n = (size_t)(end - base);
+	if (n == 0)
+	{
+		snprintf(sample_name, PATHLEN, "union_sketch");
+		return;
+	}
+	if (n >= PATHLEN)
+		n = PATHLEN - 1;
+	memcpy(sample_name, base, n);
+	sample_name[n] = '\0';
+}
+
+static void write_lsketch_union_as_one_sample(set_opt_t *set_opt,
+											  const dim_sketch_stat_t *input_stat,
+											  const uint64_t *union_records,
+											  size_t union_ct)
+{
+	dim_sketch_stat_t out_stat = *input_stat;
+	out_stat.infile_num = 1;
+	out_stat.koc = false;
+	uint64_t out_index[2] = {0, (uint64_t)union_ct};
+	char sample_name[PATHLEN] = {0};
+	basename_into_sample_name(set_opt->outdir, sample_name);
+
+	require_no_stale_union_as_sketch_file(set_opt->outdir, combined_ab_suffix);
+	require_no_stale_union_as_sketch_file(set_opt->outdir, sketch_position_suffix);
+	require_no_stale_union_as_sketch_file(set_opt->outdir, sketch_qc_stat);
+	require_no_stale_union_as_sketch_file(set_opt->outdir, sketch_anno_stat);
+	require_no_stale_union_as_sketch_file(set_opt->outdir, sketch_infile_meta_stat);
+	require_no_stale_union_as_sketch_file(set_opt->outdir, sorted_comb_ctxgid64obj32);
+	require_no_stale_union_as_sketch_file(set_opt->outdir, combined_unique_bits_suffix);
+	require_no_stale_union_as_sketch_file(set_opt->outdir, lpan_prefix);
+	require_no_stale_union_as_sketch_file(set_opt->outdir, luniq_pan_prefix);
+
+	write_to_file(test_create_fullpath(set_opt->outdir, combined_sketch_suffix),
+				  union_records, union_ct * sizeof(union_records[0]));
+	write_to_file(test_create_fullpath(set_opt->outdir, idx_sketch_suffix),
+				  out_index, sizeof(out_index));
+	concat_and_write_to_file(test_create_fullpath(set_opt->outdir, sketch_stat),
+							 &out_stat, sizeof(out_stat),
+							 sample_name, sizeof(sample_name));
+
+	if (input_stat->koc)
+		fprintf(stderr,
+				"Warning: --union --as sketch writes a presence union and omits %s abundance counts.\n",
+				combined_ab_suffix);
+}
+
 void sketch_inspect_print_samples(const char *sketch_path)
 {
 	void *mem_stat = read_from_file(test_get_fullpath(sketch_path, sketch_stat), &file_size);
@@ -355,7 +424,7 @@ int lsketch_union(set_opt_t *set_opt)
 	void *mem_stat = read_from_file(test_get_fullpath(set_opt->insketchpath, sketch_stat), &file_size);
 	const size_t stat_file_size = file_size;
 	memcpy(&lco_stat_readin, mem_stat, sizeof(lco_stat_readin));
-	if (lco_stat_readin.infile_num == 1)
+	if (lco_stat_readin.infile_num == 1 && set_opt->union_as == SET_UNION_AS_PAN)
 	{ // no need create
 		printf("only 1 sketch, use %s as pan-sketch?(Y/N)\n", set_opt->insketchpath);
 		char inpbuff;
@@ -385,8 +454,11 @@ int lsketch_union(set_opt_t *set_opt)
 	if (set_opt->operation == 2)
 	{ // -u: normal union mode
 		const size_t union_ct = compact_union_or_unique_uint64(sorted_kmers, in_kmer_ct, false);
-		write_to_file(test_create_fullpath(set_opt->outdir, lpan_prefix),
-					  sorted_kmers, union_ct * sizeof(sorted_kmers[0]));
+		if (set_opt->union_as == SET_UNION_AS_SKETCH)
+			write_lsketch_union_as_one_sample(set_opt, &lco_stat_readin, sorted_kmers, union_ct);
+		else
+			write_to_file(test_create_fullpath(set_opt->outdir, lpan_prefix),
+						  sorted_kmers, union_ct * sizeof(sorted_kmers[0]));
 	}
 	else if (set_opt->operation == 3)
 	{ // -q: uniq union mode
@@ -482,8 +554,11 @@ int lsketch_union(set_opt_t *set_opt)
 	}
 	else
 		err(EINVAL, "operation value %d neither 2 (-u: union) nor 3 (-q :uniq uion )", set_opt->operation);
-	write_to_file(test_create_fullpath(set_opt->outdir, sketch_stat), mem_stat, stat_file_size);
-	copy_lsketch_annotations(set_opt->insketchpath, set_opt->outdir, lco_stat_readin.infile_num);
+	if (set_opt->operation != 2 || set_opt->union_as == SET_UNION_AS_PAN)
+	{
+		write_to_file(test_create_fullpath(set_opt->outdir, sketch_stat), mem_stat, stat_file_size);
+		copy_lsketch_annotations(set_opt->insketchpath, set_opt->outdir, lco_stat_readin.infile_num);
+	}
 	free(sorted_kmers);
 	free_all(mem_stat, NULL);
 	return 1;
