@@ -23,4 +23,11 @@ jobs:
         if: matrix.flags == 'external-cflags'
         run: make -j2 CFLAGS='-O2 -std=gnu11'
       - name: Smoke, CLI, docs, and tutorial checks
-        run: make test
+        env:
+          BUILD_VARIANT: ${{ matrix.flags }}
+        run: |
+          if [ "$BUILD_VARIANT" = external-cflags ]; then
+            make test CFLAGS='-O2 -std=gnu11'
+          else
+            make test
+          fi

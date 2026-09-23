@@ -8,7 +8,7 @@ distance matrices, and representative selection from assemblies or reads.
 - [Quickstart with bundled example data](docs/quickstart.md)
 - [Choose a workflow](docs/workflows.md)
 - [Full CLI manual](docs/kssd3a_user_manual.md)
-- [Changes in this development version](CHANGELOG.md)
+- [Release notes](CHANGELOG.md)
 
 ## Build And Try
 
@@ -89,6 +89,33 @@ WASM, research/manuscript records, and internal maintenance scripts.
 `SOURCE_COMMIT` records the mother source commit and clean/dirty state.
 `PUBLIC_EXPORT_MANIFEST.tsv` contains SHA-256 hashes of exported files.
 A dirty development snapshot is not a frozen release.
+
+## Frozen Benchmark Version
+
+Use the `v3.1.0` tag for this release, not the changing `master` branch:
+
+```bash
+git clone https://github.com/yhg926/KSSD3A-public.git
+cd KSSD3A-public
+git checkout --detach v3.1.0
+make -j2
+make test
+git rev-parse HEAD
+bin/kssd3a --version
+bin/kssd3a doctor
+sha256sum bin/kssd3a
+```
+
+The release also provides a tested source archive, `SHA256SUMS`, and
+`RELEASE_PROVENANCE.json`. Verify downloaded assets with
+`sha256sum -c SHA256SUMS`. The provenance describes the release build; locally built
+binary checksums can differ with the compiler and build environment.
+
+For each benchmark, retain the exact commit, binary checksum, compiler/build
+flags, complete commands, metric, fold/pattern, filtering options, thread
+counts, seeds, and input/database checksums. Record these outside this code
+repository. This release is a software baseline, not a scientific accuracy
+claim. Later fixes get new tags; existing release tags must not be moved.
 
 ## License
 
