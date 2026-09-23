@@ -44,6 +44,7 @@ enum
   MATRIX_KEY_INDEX_MAX_CTX_FREQ,
   MATRIX_KEY_INDEX_MIN_VOTES,
   MATRIX_KEY_INDEX_SAMPLE_STEP,
+  MATRIX_KEY_QUERY_SKETCH_LIST,
   MATRIX_KEY_PROGRESS,
   MATRIX_KEY_SPARSE,
   MATRIX_KEY_DEDUP_STRATEGY
@@ -53,6 +54,8 @@ static struct argp_option opt_matrix[] =
 {
 	{"ref",'r',"<DIR>", 0, "Reference sketches. Omit for triangle mode.",9},
 	{"query",'q',"<DIR>", 0, "Query sketches.",1},
+	{"query-sketch-list", MATRIX_KEY_QUERY_SKETCH_LIST, "<FILE>", 0,
+	 "One compatible -T query sketch directory per line; rectangular full matrix only.", 1},
 	{"metric",'m',"<METRIC|EXPR>", 0, "Pairwise metric: ctx-moe, ctx-naive, p_dist, mash, or aaf. Sparse formats also accept quoted A&B or A|B expressions. Numeric 0/1 alias mash/aaf. [ctx-naive]",2},
 	{"format", MATRIX_KEY_FORMAT, "<FORMAT>", 0, "Report format: full, triangle, edges/sparse, clusters, or dedup-plan. [full for -r/-q; triangle for one sketch]", 2},
 	{"sparse", MATRIX_KEY_SPARSE, 0, 0, "Alias for --format sparse/edges; requires --cut.", 2},
@@ -87,11 +90,12 @@ static char doc_matrix[] =
   "\n"
   "Report pairwise sketch distance matrices, sparse edge lists, clusters, or dedup plans."
   "\v"
-  "Use one sketch argument, -q, or -r/-q for a rectangular query-row by reference-column report.\n"
+  "Use one sketch argument, -q, -r/-q, or -r/--query-sketch-list for a rectangular query-row by reference-column report.\n"
   "\n"
   "Examples:\n"
 	  "  kssd3a matrix --format triangle -q sketches -o triangle.tsv\n"
 	  "  kssd3a matrix -r ref_sketches -q qry_sketches --format full -o matrix.tsv\n"
+	  "  kssd3a matrix -r ref_sketches --query-sketch-list queries.txt --format full -o matrix.tsv\n"
 	  "  kssd3a matrix --sparse --cut 0.05 sketches > sparse_edges.tsv\n"
 	  "  kssd3a matrix --format edges -m 'ctx-naive&aaf' --cut 0.05 sketches\n"
 	  "  kssd3a matrix --format clusters --cut 0.05 sketches > clusters.tsv\n"
@@ -130,6 +134,7 @@ matrix_opt_t matrix_opt ={
 	.e = 1.0,
 	.refdir[0] = '\0',
 	.qrydir[0] = '\0',
+	.qrylist[0] = '\0',
 	.outf[0] = '\0',
 	.edge_outf[0] = '\0',
 	.keep_outf[0] = '\0',
@@ -309,6 +314,11 @@ static error_t parse_matrix(int key, char* arg, struct argp_state* state) {
 			copy_path_arg(state, "-q/--query", matrix_opt.qrydir, sizeof(matrix_opt.qrydir), arg);
 			break;
 		}
+		case MATRIX_KEY_QUERY_SKETCH_LIST:
+		{
+			copy_path_arg(state, "--query-sketch-list", matrix_opt.qrylist, sizeof(matrix_opt.qrylist), arg);
+			break;
+		}
 		case 'r':
     {
       copy_path_arg(state, "-r/--ref", matrix_opt.refdir, sizeof(matrix_opt.refdir), arg);
@@ -388,13 +398,19 @@ static error_t parse_matrix(int key, char* arg, struct argp_state* state) {
 		}
     case ARGP_KEY_END:
     {	
-			if (matrix_opt.qrydir[0] == '\0' && matrix_opt.num_remaining_args == 1)
+			if (matrix_opt.qrydir[0] != '\0' && matrix_opt.qrylist[0] != '\0')
+				argp_error(state, "-q/--query and --query-sketch-list are mutually exclusive");
+			if (matrix_opt.qrylist[0] != '\0' && matrix_opt.num_remaining_args > 0)
+				argp_error(state, "--query-sketch-list cannot be combined with a positional sketch argument");
+			if (matrix_opt.qrydir[0] == '\0' && matrix_opt.qrylist[0] == '\0' && matrix_opt.num_remaining_args == 1)
 				copy_path_arg(state, "sketch", matrix_opt.qrydir, sizeof(matrix_opt.qrydir),
 				              matrix_opt.remaining_args[0]);
 			else if (matrix_opt.num_remaining_args > 0)
 				argp_error(state, "matrix accepts at most one positional sketch argument; use -r/-q for rectangular reports");
-			if(matrix_opt.qrydir[0] == '\0')
-				argp_error(state, "missing sketch input; provide one sketch argument or -q/--query");
+			if(matrix_opt.qrydir[0] == '\0' && matrix_opt.qrylist[0] == '\0')
+				argp_error(state, "missing sketch input; provide one sketch argument, -q/--query, or --query-sketch-list");
+			if (matrix_opt.qrylist[0] != '\0' && matrix_opt.refdir[0] == '\0')
+				argp_error(state, "--query-sketch-list requires -r/--ref");
 			if (matrix_opt.refdir[0] != '\0' && matrix_opt.format == MATRIX_FORMAT_TRIANGLE)
 				argp_error(state, "--format triangle is only valid for one sketch");
 			const bool rectangular = matrix_opt.refdir[0] != '\0';
@@ -428,6 +444,9 @@ static error_t parse_matrix(int key, char* arg, struct argp_state* state) {
 			if (matrix_opt.matrix_out_format == MATRIX_KEEP_MATRIX_PHYLIP &&
 			    matrix_opt.refdir[0] != '\0')
 				argp_error(state, "--matrix-format phylip requires one square sketch, not -r/-q");
+			if (matrix_opt.qrylist[0] != '\0' &&
+			    (effective_format != MATRIX_FORMAT_FULL || matrix_opt.ani))
+				argp_error(state, "--query-sketch-list currently supports rectangular --format full without --ani");
 			if (matrix_opt.matrix_idmap_outf[0] != '\0' &&
 			    matrix_opt.matrix_out_format != MATRIX_KEEP_MATRIX_PHYLIP)
 				argp_error(state, "--matrix-idmap requires --matrix-format phylip");
@@ -539,6 +558,8 @@ int cmd_matrix(struct argp_state* state)
   argp_parse(&argp_matrix, argc, argv, ARGP_IN_ORDER, &argc, &matrix);
 
   state->next += argc - 1;
+	if (matrix_opt.qrylist[0] != '\0')
+		return compute_matrix_query_list(&matrix_opt);
   if (matrix_opt.qrydir[0] != '\0') {
   	if (matrix_opt.refdir[0] == '\0')
 	  	return compute_triangle(&matrix_opt);

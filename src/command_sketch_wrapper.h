@@ -22,6 +22,7 @@ typedef struct sketch_opt
 	int p; // threads counts
 	bool abundance;
 	bool asone;	// treat input genomes as parts of final genome.
+	bool separate_outputs; // write one self-contained sketch directory per input
 	bool conflict; // keep conflict context-object or not 
 	bool anno; // write FASTA/FASTQ header annotations to lcofiles.anno
 	bool compute_meta; // write per-input metadata to lcofiles.infilemeta

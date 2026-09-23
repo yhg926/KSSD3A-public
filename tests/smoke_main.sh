@@ -99,6 +99,19 @@ require_same_except_first_line() {
   fi
 }
 
+require_same_place_rows() {
+  local a=$1
+  local b=$2
+  local aa="$WORKDIR/place_a_rows.tsv"
+  local bb="$WORKDIR/place_b_rows.tsv"
+  tail -n +3 "$a" | sort > "$aa"
+  tail -n +3 "$b" | sort > "$bb"
+  if ! cmp -s "$aa" "$bb"; then
+    printf 'smoke: expected %s and %s to contain the same placement rows\n' "$a" "$b" >&2
+    exit 1
+  fi
+}
+
 require_same_tsv_except_first_col() {
   local a=$1
   local b=$2
@@ -891,5 +904,79 @@ run "$BIN" place \
 require_same_except_first_line "$OUT/place.tsv" "$OUT/place_phylip.tsv"
 require_same_file "$OUT/place_pairwise.tsv" "$OUT/place_phylip_pairwise.tsv"
 python3 -m json.tool "$OUT/place_phylip.jplace" > /dev/null
+
+# A list of independently created query sketches must produce the same sparse
+# placement as a conventional multi-sample query sketch in the same order.
+run "$BIN" sketch -T -f8 --conflict -f0 -o "$OUT/place_ref_Tf8" \
+  "$REFS/refA.fna" "$REFS/refB.fna"
+run "$BIN" sketch -i "$OUT/place_ref_Tf8"
+run "$BIN" sketch -T -f8 --conflict -f0 -o "$OUT/place_query_batch_Tf8" \
+  "$QRYS/qryA.fna" "$QRYS/qryA2.fna"
+run "$BIN" sketch -T -f8 --conflict -f0 -o "$OUT/place_query_1_Tf8" "$QRYS/qryA.fna"
+run "$BIN" sketch -T -f8 --conflict -f0 -o "$OUT/place_query_2_Tf8" "$QRYS/qryA2.fna"
+run "$BIN" sketch -T -f8 --conflict -f0 --separate -o "$OUT/place_query_separate" \
+  "$QRYS/qryA.fna" "$QRYS/qryA2.fna"
+require_exists "$OUT/place_query_separate/qryA.fna/lcofiles.stat"
+require_exists "$OUT/place_query_separate/qryA2.fna/lcofiles.stat"
+require_exists "$OUT/place_query_separate/query_sketches.txt"
+printf '%s\n' '(A:1,B:1);' > "$OUT/place_sparse_tree.nwk"
+printf 'ID\tSample\nA\t%s\nB\t%s\n' "$REFS/refA.fna" "$REFS/refB.fna" > "$OUT/place_sparse_idmap.tsv"
+printf '%s\n' "$OUT/place_query_1_Tf8" "$OUT/place_query_2_Tf8" > "$OUT/place_query_sketches.txt"
+printf '%s\n' "$OUT/place_query_2_Tf8" "$OUT/place_query_1_Tf8" > "$OUT/place_query_sketches_reversed.txt"
+run "$BIN" matrix -r "$OUT/place_ref_Tf8" -q "$OUT/place_query_batch_Tf8" \
+  --format full --metric p_dist -o "$OUT/place_sparse_dist.tsv"
+run "$BIN" matrix -r "$OUT/place_ref_Tf8" \
+  --query-sketch-list "$OUT/place_query_sketches.txt" \
+  --format full --metric p_dist -o "$OUT/place_sparse_list_dist.tsv"
+require_same_file "$OUT/place_sparse_dist.tsv" "$OUT/place_sparse_list_dist.tsv"
+run "$BIN" matrix -r "$OUT/place_ref_Tf8" \
+  --query-sketch-list "$OUT/place_query_separate/query_sketches.txt" \
+  --format full --metric p_dist -o "$OUT/place_sparse_separate_dist.tsv"
+require_same_file "$OUT/place_sparse_dist.tsv" "$OUT/place_sparse_separate_dist.tsv"
+run "$BIN" matrix -r "$OUT/place_ref_Tf8" \
+  --query-sketch-list "$OUT/place_query_sketches_reversed.txt" \
+  --format full --metric p_dist -o "$OUT/place_sparse_reversed_dist.tsv"
+run "$BIN" place \
+  --tree "$OUT/place_sparse_tree.nwk" \
+  --idmap "$OUT/place_sparse_idmap.tsv" \
+  --distances "$OUT/place_sparse_dist.tsv" \
+  --distance-format matrix \
+  --ref-sketch "$OUT/place_ref_Tf8" \
+  --query-sketch "$OUT/place_query_batch_Tf8" \
+  --rank-by sparse --top 1 --threads 1 --out "$OUT/place_sparse_single.tsv"
+run "$BIN" place \
+  --tree "$OUT/place_sparse_tree.nwk" \
+  --idmap "$OUT/place_sparse_idmap.tsv" \
+  --distances "$OUT/place_sparse_separate_dist.tsv" \
+  --distance-format matrix \
+  --ref-sketch "$OUT/place_ref_Tf8" \
+  --query-sketch-list "$OUT/place_query_separate/query_sketches.txt" \
+  --rank-by sparse --top 1 --threads 1 --out "$OUT/place_sparse_list.tsv"
+require_same_except_first_line "$OUT/place_sparse_single.tsv" "$OUT/place_sparse_list.tsv"
+run "$BIN" place \
+  --tree "$OUT/place_sparse_tree.nwk" \
+  --idmap "$OUT/place_sparse_idmap.tsv" \
+  --distances "$OUT/place_sparse_reversed_dist.tsv" \
+  --distance-format matrix \
+  --ref-sketch "$OUT/place_ref_Tf8" \
+  --query-sketch-list "$OUT/place_query_sketches_reversed.txt" \
+  --rank-by sparse --top 1 --threads 1 --out "$OUT/place_sparse_reversed.tsv"
+require_same_place_rows "$OUT/place_sparse_single.tsv" "$OUT/place_sparse_reversed.tsv"
+
+# Legacy labels may assert sketch identities, but must never reorder sparse
+# records independently from the names embedded in the sketch.
+printf '%s\n' "$QRYS/qryA2.fna" "$QRYS/qryA.fna" > "$OUT/place_query_paths_wrong_order.txt"
+if "$BIN" place \
+  --tree "$OUT/place_sparse_tree.nwk" \
+  --idmap "$OUT/place_sparse_idmap.tsv" \
+  --distances "$OUT/place_sparse_dist.tsv" \
+  --distance-format matrix \
+  --ref-sketch "$OUT/place_ref_Tf8" \
+  --query-sketch "$OUT/place_query_batch_Tf8" \
+  --query-paths "$OUT/place_query_paths_wrong_order.txt" \
+  --rank-by sparse --top 1 --threads 1 --out "$OUT/place_sparse_bad_labels.tsv"; then
+  printf 'smoke: expected mismatched --query-paths order to fail\n' >&2
+  exit 1
+fi
 
 printf 'smoke: all main CLI checks passed\n' >&2

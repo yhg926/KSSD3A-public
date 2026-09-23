@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "command_place.h"
+#include "global_basic.h"
 #include <ctype.h>
 #include <errno.h>
 #include <float.h>
@@ -15,6 +16,7 @@
 #include <sys/stat.h>
 #include <time.h>
 
+#undef OBJ_BITS
 #define GID_BITS 20
 #define OBJ_BITS 20
 #define OBJ_MASK ((uint64_t)((1ULL << OBJ_BITS) - 1ULL))
@@ -74,6 +76,7 @@ typedef struct {
     double *dist;
     unsigned char *has_dist;
     int n_dist;
+    int sketch_index;
 } query_t;
 
 typedef struct {
@@ -231,6 +234,180 @@ static char *path_join(const char *dir, const char *file) {
     char *out = (char *)xmalloc(n);
     snprintf(out, n, "%s/%s", dir, file);
     return out;
+}
+
+typedef struct {
+    dim_sketch_stat_t stat;
+    char **names;
+    uint64_t *index;
+    size_t n_index;
+    uint64_t *comb;
+    size_t n_comb;
+} query_sketch_part_t;
+
+static void query_sketch_part_destroy(query_sketch_part_t *part) {
+    if (!part) return;
+    for (int i = 0; i < part->stat.infile_num; i++) free(part->names ? part->names[i] : NULL);
+    free(part->names);
+    free(part->index);
+    free(part->comb);
+    memset(part, 0, sizeof(*part));
+}
+
+static void check_query_sketch_stats(const dim_sketch_stat_t *expected,
+                                     const dim_sketch_stat_t *actual,
+                                     const char *dir) {
+    if (expected->hash_id != actual->hash_id ||
+        expected->koc != actual->koc ||
+        expected->conflict != actual->conflict ||
+        expected->coden_len != actual->coden_len ||
+        expected->klen != actual->klen ||
+        expected->hclen != actual->hclen ||
+        expected->holen != actual->holen ||
+        expected->drfold != actual->drfold) {
+        die("query sketch %s is incompatible with the first --query-sketch-list entry", dir);
+    }
+}
+
+static query_sketch_part_t load_query_sketch_part(const char *dir) {
+    query_sketch_part_t part = {0};
+    size_t stat_len = 0;
+    char *stat_path = path_join(dir, "lcofiles.stat");
+    char *stat_data = read_text_file(stat_path, &stat_len);
+    if (stat_len < sizeof(part.stat)) {
+        die("invalid lcofiles.stat in %s", dir);
+    }
+    memcpy(&part.stat, stat_data, sizeof(part.stat));
+    if (part.stat.infile_num <= 0 ||
+        (size_t)part.stat.infile_num > (SIZE_MAX - sizeof(part.stat)) / PATHLEN ||
+        stat_len != sizeof(part.stat) + (size_t)part.stat.infile_num * PATHLEN) {
+        die("invalid lcofiles.stat record count in %s", dir);
+    }
+    part.names = (char **)xcalloc((size_t)part.stat.infile_num, sizeof(*part.names));
+    for (int i = 0; i < part.stat.infile_num; i++) {
+        const char *stored_name = stat_data + sizeof(part.stat) + (size_t)i * PATHLEN;
+        if (!memchr(stored_name, '\0', PATHLEN)) {
+            die("unterminated sample name in lcofiles.stat: %s", dir);
+        }
+        part.names[i] = xstrdup(stored_name);
+    }
+    free(stat_data);
+    free(stat_path);
+
+    char *index_path = path_join(dir, "comblco.index");
+    char *comb_path = path_join(dir, "comblco");
+    part.index = (uint64_t *)read_binary_file(index_path, sizeof(uint64_t), &part.n_index);
+    part.comb = (uint64_t *)read_binary_file(comb_path, sizeof(uint64_t), &part.n_comb);
+    free(index_path);
+    free(comb_path);
+    if (part.n_index != (size_t)part.stat.infile_num + 1 || part.index[0] != 0 ||
+        part.index[part.n_index - 1] != part.n_comb) {
+        die("invalid comblco index in %s", dir);
+    }
+    for (size_t i = 1; i < part.n_index; i++) {
+        if (part.index[i] < part.index[i - 1]) {
+            die("non-monotonic comblco index in %s", dir);
+        }
+    }
+    return part;
+}
+
+static char *trim_query_sketch_list_line(char *line) {
+    while (*line && isspace((unsigned char)*line)) line++;
+    char *end = line + strlen(line);
+    while (end > line && isspace((unsigned char)end[-1])) *--end = '\0';
+    return line;
+}
+
+static void load_query_sketch_list(const char *list_path,
+                                   uint64_t **index_out, size_t *n_index_out,
+                                   uint64_t **comb_out, size_t *n_comb_out,
+                                   char ***names_out, size_t *n_names_out) {
+    FILE *fp = fopen(list_path, "r");
+    if (!fp) die("open failed for %s: %s", list_path, strerror(errno));
+    query_sketch_part_t *parts = NULL;
+    size_t n_parts = 0, cap_parts = 0, total_samples = 0, total_comb = 0;
+    dim_sketch_stat_t expected = {0};
+    char *line = NULL;
+    size_t line_cap = 0;
+    ssize_t line_len;
+    while ((line_len = getline(&line, &line_cap, fp)) >= 0) {
+        (void)line_len;
+        char *dir = trim_query_sketch_list_line(line);
+        if (!*dir || *dir == '#') continue;
+        if (n_parts == cap_parts) {
+            cap_parts = cap_parts ? cap_parts * 2 : 16;
+            parts = (query_sketch_part_t *)xrealloc(parts, cap_parts * sizeof(*parts));
+        }
+        parts[n_parts] = load_query_sketch_part(dir);
+        if (n_parts == 0) expected = parts[n_parts].stat;
+        else check_query_sketch_stats(&expected, &parts[n_parts].stat, dir);
+        if ((size_t)parts[n_parts].stat.infile_num > SIZE_MAX - total_samples ||
+            parts[n_parts].n_comb > SIZE_MAX - total_comb) {
+            die("query sketch list is too large");
+        }
+        total_samples += (size_t)parts[n_parts].stat.infile_num;
+        total_comb += parts[n_parts].n_comb;
+        n_parts++;
+    }
+    free(line);
+    fclose(fp);
+    if (n_parts == 0) die("no query sketch directories listed in %s", list_path);
+    if (total_samples == SIZE_MAX || total_comb > SIZE_MAX / sizeof(uint64_t)) {
+        die("query sketch list is too large");
+    }
+
+    uint64_t *all_index = (uint64_t *)xcalloc(total_samples + 1, sizeof(*all_index));
+    uint64_t *all_comb = (uint64_t *)xmalloc(total_comb * sizeof(*all_comb));
+    char **all_names = (char **)xcalloc(total_samples, sizeof(*all_names));
+    size_t sample_offset = 0, comb_offset = 0;
+    for (size_t p = 0; p < n_parts; p++) {
+        query_sketch_part_t *part = &parts[p];
+        size_t n_samples = (size_t)part->stat.infile_num;
+        for (size_t i = 1; i <= n_samples; i++) {
+            all_index[sample_offset + i] = comb_offset + part->index[i];
+        }
+        for (size_t i = 0; i < n_samples; i++) {
+            all_names[sample_offset + i] = part->names[i];
+            part->names[i] = NULL;
+        }
+        if (part->n_comb) {
+            memcpy(all_comb + comb_offset, part->comb, part->n_comb * sizeof(*all_comb));
+        }
+        sample_offset += n_samples;
+        comb_offset += part->n_comb;
+        query_sketch_part_destroy(part);
+    }
+    free(parts);
+    *index_out = all_index;
+    *n_index_out = total_samples + 1;
+    *comb_out = all_comb;
+    *n_comb_out = total_comb;
+    *names_out = all_names;
+    *n_names_out = total_samples;
+}
+
+static void load_query_sketch_dir(const char *dir,
+                                  uint64_t **index_out, size_t *n_index_out,
+                                  uint64_t **comb_out, size_t *n_comb_out,
+                                  char ***names_out, size_t *n_names_out) {
+    query_sketch_part_t part = load_query_sketch_part(dir);
+    *index_out = part.index;
+    *n_index_out = part.n_index;
+    *comb_out = part.comb;
+    *n_comb_out = part.n_comb;
+    *names_out = part.names;
+    *n_names_out = (size_t)part.stat.infile_num;
+    part.index = NULL;
+    part.comb = NULL;
+    part.names = NULL;
+    query_sketch_part_destroy(&part);
+}
+
+static void free_query_sketch_names(char **names, size_t n_names) {
+    if (!names) return;
+    for (size_t i = 0; i < n_names; i++) free(names[i]);
+    free(names);
 }
 
 static void strbuf_appendf(strbuf_t *b, const char *fmt, ...) {
@@ -436,6 +613,7 @@ static query_t *queries_add(queries_t *queries, const char *name, int n_refs) {
     q->name = xstrdup(name);
     q->dist = (double *)xcalloc((size_t)n_refs, sizeof(double));
     q->has_dist = (unsigned char *)xcalloc((size_t)n_refs, 1);
+    q->sketch_index = -1;
     return q;
 }
 
@@ -460,6 +638,55 @@ static queries_t read_query_paths(const char *path, int n_refs) {
     free(line);
     fclose(fp);
     return queries;
+}
+
+static queries_t read_query_names(char *const *names, size_t n_names, int n_refs) {
+    queries_t queries = {.preloaded = 1};
+    for (size_t i = 0; i < n_names; i++) {
+        if (!names[i] || !names[i][0]) die("empty sample name in query sketch metadata");
+        if (queries_find(&queries, names[i])) {
+            die("duplicate sample name in query sketch metadata: %s", names[i]);
+        }
+        query_t *q = queries_add(&queries, names[i], n_refs);
+        q->sketch_index = (int)i;
+    }
+    return queries;
+}
+
+static void validate_query_paths(const char *path, char *const *names, size_t n_names) {
+    FILE *fp = fopen(path, "r");
+    if (!fp) die("open failed for %s: %s", path, strerror(errno));
+    char *line = NULL;
+    size_t len = 0;
+    size_t i = 0;
+    while (getline(&line, &len, fp) >= 0) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (!line[0]) continue;
+        if (i >= n_names) {
+            die("--query-paths has more labels than query sketch metadata");
+        }
+        if (strcmp(line, names[i]) != 0) {
+            die("--query-paths label %zu (%s) does not match query sketch sample (%s); "
+                "query sketch metadata is authoritative",
+                i + 1, line, names[i]);
+        }
+        i++;
+    }
+    free(line);
+    fclose(fp);
+    if (i != n_names) {
+        die("--query-paths has %zu labels; query sketch metadata has %zu samples", i, n_names);
+    }
+}
+
+static queries_t init_queries(const char *query_paths, char *const *query_names,
+                              size_t n_query_names, int n_refs) {
+    if (query_names) {
+        if (query_paths) validate_query_paths(query_paths, query_names, n_query_names);
+        return read_query_names(query_names, n_query_names, n_refs);
+    }
+    if (query_paths) return read_query_paths(query_paths, n_refs);
+    return (queries_t){0};
 }
 
 static int split_tab(char *line, char **cols, int max_cols) {
@@ -557,8 +784,9 @@ static distance_format_t detect_distance_format(const char *path) {
     return fmt;
 }
 
-static queries_t read_distances_ani(const char *path, const refs_t *refs, const char *query_paths) {
-    queries_t queries = query_paths ? read_query_paths(query_paths, refs->n) : (queries_t){0};
+static queries_t read_distances_ani(const char *path, const refs_t *refs, const char *query_paths,
+                                    char *const *query_names, size_t n_query_names) {
+    queries_t queries = init_queries(query_paths, query_names, n_query_names, refs->n);
     FILE *fp = fopen(path, "r");
     if (!fp) die("open failed for %s: %s", path, strerror(errno));
     char *line = NULL;
@@ -591,8 +819,9 @@ static queries_t read_distances_ani(const char *path, const refs_t *refs, const 
     return queries;
 }
 
-static queries_t read_distances_matrix(const char *path, const refs_t *refs, const char *query_paths) {
-    queries_t queries = query_paths ? read_query_paths(query_paths, refs->n) : (queries_t){0};
+static queries_t read_distances_matrix(const char *path, const refs_t *refs, const char *query_paths,
+                                       char *const *query_names, size_t n_query_names) {
+    queries_t queries = init_queries(query_paths, query_names, n_query_names, refs->n);
     FILE *fp = fopen(path, "r");
     if (!fp) die("open failed for %s: %s", path, strerror(errno));
     char *line = NULL;
@@ -642,8 +871,9 @@ static queries_t read_distances_matrix(const char *path, const refs_t *refs, con
     return queries;
 }
 
-static queries_t read_distances_phylip(const char *path, const refs_t *refs, const char *query_paths) {
-    queries_t queries = query_paths ? read_query_paths(query_paths, refs->n) : (queries_t){0};
+static queries_t read_distances_phylip(const char *path, const refs_t *refs, const char *query_paths,
+                                       char *const *query_names, size_t n_query_names) {
+    queries_t queries = init_queries(query_paths, query_names, n_query_names, refs->n);
     FILE *fp = fopen(path, "r");
     if (!fp) die("open failed for %s: %s", path, strerror(errno));
     char *line = NULL;
@@ -710,16 +940,17 @@ static queries_t read_distances_phylip(const char *path, const refs_t *refs, con
 }
 
 static queries_t read_distances(const char *path, const refs_t *refs, const char *query_paths,
+                                char *const *query_names, size_t n_query_names,
                                 distance_format_t format) {
     if (format == DISTANCE_FORMAT_AUTO)
         format = detect_distance_format(path);
     switch (format) {
     case DISTANCE_FORMAT_ANI:
-        return read_distances_ani(path, refs, query_paths);
+        return read_distances_ani(path, refs, query_paths, query_names, n_query_names);
     case DISTANCE_FORMAT_MATRIX:
-        return read_distances_matrix(path, refs, query_paths);
+        return read_distances_matrix(path, refs, query_paths, query_names, n_query_names);
     case DISTANCE_FORMAT_PHYLIP:
-        return read_distances_phylip(path, refs, query_paths);
+        return read_distances_phylip(path, refs, query_paths, query_names, n_query_names);
     case DISTANCE_FORMAT_AUTO:
     default:
         break;
@@ -1083,13 +1314,16 @@ static size_t lower_bound_ctx(const sorted_rec_t *arr, size_t n, uint64_t key) {
     return lo;
 }
 
-static void compute_sparse_for_query(place_ctx_t *ctx, int qi, const query_t *q,
+static void compute_sparse_for_query(place_ctx_t *ctx, const query_t *q,
                                      placement_t *placements, int n_place) {
     if (!ctx->sparse_enabled || n_place <= 0) return;
-    if ((size_t)(qi + 1) >= ctx->n_qidx) return;
+    int sketch_index = q->sketch_index;
+    if (sketch_index < 0 || (size_t)(sketch_index + 1) >= ctx->n_qidx) {
+        die("no sparse sketch index is bound to query sample: %s", q->name);
+    }
     int n_refs = ctx->refs->n;
-    uint64_t start = ctx->qidx[qi];
-    uint64_t end = ctx->qidx[qi + 1];
+    uint64_t start = ctx->qidx[sketch_index];
+    uint64_t end = ctx->qidx[sketch_index + 1];
     if (end > ctx->n_qcomb) end = ctx->n_qcomb;
 
     int nearest_limit = ctx->sparse_nearest < n_refs ? ctx->sparse_nearest : n_refs;
@@ -1480,7 +1714,7 @@ static char *place_one_query(place_ctx_t *ctx, int qi) {
     for (int i = 0; i < n_place; i++) placements[i].wls_rank = i + 1;
     compute_wls_confidence(ctx, placements, n_place);
 
-    compute_sparse_for_query(ctx, qi, q, placements, n_place);
+    compute_sparse_for_query(ctx, q, placements, n_place);
     qsort(placements, (size_t)n_place, sizeof(placement_t), cmp_sparse);
     int sparse_rank = 1;
     for (int i = 0; i < n_place; i++) {
@@ -1611,7 +1845,11 @@ static void usage(FILE *fp) {
         "Options:\n"
         "  --ref-sketch DIR       reference -T sketch with sortedcomb_ctxgid64obj32\n"
         "  --query-sketch DIR     query -T sketch with comblco.index and comblco\n"
-        "  --query-paths FILE     query path list matching query sketch order\n"
+        "  --query-sketch-list FILE\n"
+        "                         one query -T sketch directory per line; mutually exclusive\n"
+        "                         with --query-sketch and combined in memory\n"
+        "  --query-paths FILE     optional legacy query-label assertion; labels must\n"
+        "                         exactly match query sketch metadata order\n"
         "  --distance-format FMT  auto|ani|matrix|phylip [auto]\n"
         "                         ani expects Qry/Ref/Distance columns; matrix expects\n"
         "                         tabular kssd3a matrix full output; phylip expects a\n"
@@ -1641,6 +1879,7 @@ int cmd_place(struct argp_state *state) {
     const char *pairwise_out = NULL;
     const char *ref_sketch = NULL;
     const char *query_sketch = NULL;
+    const char *query_sketch_list = NULL;
     const char *query_paths = NULL;
     distance_format_t distance_format = DISTANCE_FORMAT_AUTO;
     const char *weight_mode = "inv_d_cap";
@@ -1662,6 +1901,7 @@ int cmd_place(struct argp_state *state) {
         else if (strcmp(argv[i], "--pairwise-out") == 0 && i + 1 < argc) pairwise_out = argv[++i];
         else if (strcmp(argv[i], "--ref-sketch") == 0 && i + 1 < argc) ref_sketch = argv[++i];
         else if (strcmp(argv[i], "--query-sketch") == 0 && i + 1 < argc) query_sketch = argv[++i];
+        else if (strcmp(argv[i], "--query-sketch-list") == 0 && i + 1 < argc) query_sketch_list = argv[++i];
         else if (strcmp(argv[i], "--query-paths") == 0 && i + 1 < argc) query_paths = argv[++i];
         else if (strcmp(argv[i], "--distance-format") == 0 && i + 1 < argc) distance_format = parse_distance_format(argv[++i]);
         else if (strcmp(argv[i], "--weight-mode") == 0 && i + 1 < argc) weight_mode = argv[++i];
@@ -1686,9 +1926,15 @@ int cmd_place(struct argp_state *state) {
         usage(stderr);
         return 2;
     }
-    int sparse_enabled = ref_sketch || query_sketch || query_paths;
-    if (sparse_enabled && (!ref_sketch || !query_sketch || !query_paths)) {
-        die("--ref-sketch, --query-sketch, and --query-paths are all required for sparse-object scoring");
+    if (query_sketch && query_sketch_list) {
+        die("--query-sketch and --query-sketch-list are mutually exclusive");
+    }
+    int sparse_enabled = ref_sketch || query_sketch || query_sketch_list;
+    if (sparse_enabled && (!ref_sketch || (!query_sketch && !query_sketch_list))) {
+        die("--ref-sketch and one of --query-sketch/--query-sketch-list are required for sparse-object scoring");
+    }
+    if (query_paths && !sparse_enabled) {
+        die("--query-paths requires --ref-sketch and a query sketch");
     }
     if (top_n <= 0) top_n = 1;
     if (threads <= 0) threads = 1;
@@ -1704,25 +1950,41 @@ int cmd_place(struct argp_state *state) {
     int n_words = 0;
     uint64_t *node_bits = build_node_bits(&tree, refs.n, &n_words);
     double *node_dist = precompute_node_ref_dist(&tree, &refs);
-    queries_t queries = read_distances(dist_path, &refs, query_paths, distance_format);
-    if (queries.n <= 0) die("no query rows loaded from %s", dist_path);
 
     sorted_rec_t *sorted = NULL;
     uint64_t *qidx = NULL;
     uint64_t *qcomb = NULL;
+    char **query_names = NULL;
+    size_t n_query_names = 0;
     size_t n_sorted = 0, n_qidx = 0, n_qcomb = 0;
     if (sparse_enabled) {
         char *sorted_path = path_join(ref_sketch, "sortedcomb_ctxgid64obj32");
-        char *qidx_path = path_join(query_sketch, "comblco.index");
-        char *qcomb_path = path_join(query_sketch, "comblco");
         sorted = (sorted_rec_t *)read_binary_file(sorted_path, sizeof(sorted_rec_t), &n_sorted);
-        qidx = (uint64_t *)read_binary_file(qidx_path, sizeof(uint64_t), &n_qidx);
-        qcomb = (uint64_t *)read_binary_file(qcomb_path, sizeof(uint64_t), &n_qcomb);
         free(sorted_path);
-        free(qidx_path);
-        free(qcomb_path);
-        if ((int)n_qidx != queries.n + 1) {
-            die("query sketch index has %zu records; expected %d for query path count", n_qidx, queries.n + 1);
+        if (query_sketch_list) {
+            load_query_sketch_list(query_sketch_list, &qidx, &n_qidx, &qcomb, &n_qcomb,
+                                   &query_names, &n_query_names);
+        } else {
+            load_query_sketch_dir(query_sketch, &qidx, &n_qidx, &qcomb, &n_qcomb,
+                                  &query_names, &n_query_names);
+        }
+        if (n_qidx != n_query_names + 1) {
+            die("query sketch metadata/index sample count mismatch");
+        }
+    }
+    queries_t queries = read_distances(dist_path, &refs, query_paths, query_names, n_query_names,
+                                       distance_format);
+    free_query_sketch_names(query_names, n_query_names);
+    if (queries.n <= 0) die("no query rows loaded from %s", dist_path);
+    if (sparse_enabled && n_qidx != (size_t)queries.n + 1) {
+        die("query sketch index has %zu records; expected %d for query count", n_qidx, queries.n + 1);
+    }
+    if (sparse_enabled) {
+        for (int i = 0; i < queries.n; i++) {
+            if (queries.items[i].n_dist == 0) {
+                die("distance input has no reference distances for query sketch sample: %s",
+                    queries.items[i].name);
+            }
         }
     }
 

@@ -28,6 +28,7 @@ struct arg_ani
 	char *name;
 	int manual_pattern_seen;
 	int coden_pattern_seen;
+	int output_values;
 };
 
 enum
@@ -51,7 +52,10 @@ enum
 	ANI_UNIFIED_METRIC,
 	ANI_ESTIMATE_COVERAGE,
 	ANI_MAX_PDIST,
-	ANI_MAX_DIFF_OBJ_SECTION
+	ANI_MAX_DIFF_OBJ_SECTION,
+	ANI_METRIC_NAME,
+	ANI_FORMAT_NAME,
+	ANI_OUTPUT_VALUES
 };
 
 enum
@@ -81,8 +85,9 @@ static struct argp_option opt_ani[] =
 		{"ignoreconflict", 778, 0, 0, "Ignore reference-side contexts that contain conflicting objects.", ANI_GROUP_MODE},
 
 		{0, 0, 0, 0, "Filtering and metrics:", ANI_GROUP_FILTER},
-		{"afcut", 'f', "<FLOAT>", 0, "Skip reports with max(Qry_align_fraction, Ref_align_fraction) below this value. [0.5; 0.2 for unassembled/qraw queries]", ANI_GROUP_FILTER},
-		{"anicut", 'n', "<FLOAT>", 0, "Skip reports with ANI below this value. [0.95]", ANI_GROUP_FILTER},
+		{"afcut", 'f', "<0..1>", 0, "Skip reports with max(Qry_align_fraction, Ref_align_fraction) below this fraction, not percent. [0.5; 0.2 for unassembled/qraw queries]", ANI_GROUP_FILTER},
+		{"anicut", 'n', "<0..1>", 0, "Skip reports with ANI below this fraction; use 0.95, not 95. [0.95]", ANI_GROUP_FILTER},
+		{"metric", ANI_METRIC_NAME, "<NAME>", 0, "Metric: best, recalibrated, ctx-moe, ctx-naive, p_dist, mash, aaf, mash-if-far, or aaf-if-far. Same query-mode fallback rules as -s. [best]", ANI_GROUP_FILTER},
 		{"control", 'c', "<FLOAT>", 0, "Skip duplicated samples with distance below this value. [0]", ANI_GROUP_FILTER},
 		{"ctxcut", 't', "<INT>", 0, "Skip reports with overlapped context count below this value. [3]", ANI_GROUP_FILTER},
 		{"slmetrics", 's', "<+-1..9>", 0, "Metric: Best(1), Recalibrated(2), CtxMoE(3), Naive(4), MashD(5), AafD(6), MashD_if_far(7), AafD_if_far(8), p_dist(9). For unassembled/qraw, 1..4 use Naive. In matrix mode positive reports distance and negative reports ANI; detail prints both. [1]", ANI_GROUP_FILTER},
@@ -95,6 +100,8 @@ static struct argp_option opt_ani[] =
 		{"exception", 'e', "<INT>", 0, "Distance value to use when skipped. [1]", ANI_GROUP_REPORT},
 		{"glist", 'g', "<FILE>", 0, "Sample output file for KSSD set grouping.", ANI_GROUP_REPORT},
 		{"outfmt", 'm', "<0/1/2>", 0, "Output format: detail(0), matrix(1), or triangle(2). [0]", ANI_GROUP_REPORT},
+		{"format", ANI_FORMAT_NAME, "<NAME>", 0, "Output format: detail, matrix, or triangle; alias for -m. [detail]", ANI_GROUP_REPORT},
+		{"values", ANI_OUTPUT_VALUES, "<distance|ani>", 0, "Matrix/triangle values; overrides the sign of -s in any option order. Detail always includes both. [distance]", ANI_GROUP_REPORT},
 		{"outfile", 'o', "<FILE>", 0, "Output file. [STDOUT]", ANI_GROUP_REPORT},
 		{"raw-output", ANI_RAW_OUTPUT, 0, 0, "Skip calibrated/best ANI computation; selected calibrated metrics fall back to raw distances when unavailable.", ANI_GROUP_REPORT},
 		{"estimate-coverage", ANI_ESTIMATE_COVERAGE, 0, 0, "Append abundance-derived coverage/depth columns for --qraw detail output when the query sketch has comblco.a.", ANI_GROUP_REPORT},
@@ -145,6 +152,8 @@ static char doc_ani[] =
 	"Use '-' as one raw input to read FASTA/FASTQ from stdin, or --pipecmd CMD to stream each raw input through a command.\n"
 	"\n"
 	"Examples:\n"
+	"  kssd3a ani -r ref_sketches -q qry_sketches --format matrix --values ani -o ani_matrix.tsv\n"
+	"  kssd3a ani -r ref_sketches -q qry_sketches --metric p_dist -o close_pairs.tsv\n"
 	"  kssd3a ani -r ref_sketches -q qry_sketches -m 0 > ani.tsv\n"
 	"  kssd3a ani -r ref_sketches -q query.fasta.gz -m 0 > ani.tsv\n"
 	"  kssd3a ani -r ref_sketches --qraw raw_read_qry_sketches -m 0 > raw_ani.tsv\n"
@@ -254,6 +263,35 @@ static error_t parse_ani(int key, char *arg, struct argp_state *state)
 
 	switch (key)
 	{
+	case ANI_METRIC_NAME:
+	{
+		const char *names[] = {"best", "recalibrated", "ctx-moe", "ctx-naive",
+			"mash", "aaf", "mash-if-far", "aaf-if-far", "p_dist"};
+		int metric = 0;
+		for (int i = 0; i < 9; ++i)
+			if (strcmp(arg, names[i]) == 0) metric = i + 1;
+		if (strcmp(arg, "naive") == 0) metric = 4;
+		if (strcmp(arg, "pdist") == 0) metric = 9;
+		if (!metric)
+			argp_error(state, "unknown --metric '%s'; use best, recalibrated, ctx-moe, ctx-naive, p_dist, mash, aaf, mash-if-far, or aaf-if-far", arg);
+		ani_opt.s = ani_opt.s < 0 ? -metric : metric;
+		break;
+	}
+	case ANI_FORMAT_NAME:
+	{
+		if (strcmp(arg, "detail") == 0) ani_opt.fmt = 0;
+		else if (strcmp(arg, "matrix") == 0) ani_opt.fmt = 1;
+		else if (strcmp(arg, "triangle") == 0) ani_opt.fmt = 2;
+		else argp_error(state, "--format must be detail, matrix, or triangle");
+		break;
+	}
+	case ANI_OUTPUT_VALUES:
+	{
+		if (strcmp(arg, "distance") == 0) ani->output_values = 1;
+		else if (strcmp(arg, "ani") == 0) ani->output_values = -1;
+		else argp_error(state, "--values must be distance or ani");
+		break;
+	}
 	case 'm':
 	{
 		ani_opt.fmt = parse_int_range(state, "-m/--outfmt", arg, 0, 2);
@@ -398,13 +436,13 @@ static error_t parse_ani(int key, char *arg, struct argp_state *state)
 	}
 	case 'f':
 	{
-		ani_opt.afcut = (float)parse_nonnegative_double(state, "-f/--afcut", arg);
+		ani_opt.afcut = (float)parse_double_range(state, "-f/--afcut (fraction, e.g. 0.8, not 80)", arg, 0.0, 1.0);
 		ani_opt.afcut_set = true;
 		break;
 	}
 	case 'n':
 	{
-		ani_opt.anicut = (float)parse_nonnegative_double(state, "-n/--anicut", arg);
+		ani_opt.anicut = (float)parse_double_range(state, "-n/--anicut (fraction, e.g. 0.95, not 95)", arg, 0.0, 1.0);
 		break;
 	}
 	case 'N':
@@ -487,6 +525,8 @@ static error_t parse_ani(int key, char *arg, struct argp_state *state)
 	}
 	case ARGP_KEY_END:
 	{
+		if (ani->output_values)
+			ani_opt.s = abs(ani_opt.s) * ani->output_values;
 		const bool has_reflist = ani_opt.reflist[0] != '\0';
 		const bool has_qrylist = ani_opt.qrylist[0] != '\0';
 

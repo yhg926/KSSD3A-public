@@ -3,8 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "global_basic.h"
+#include "build_version.h"
   /** Global Options **/
-const char *argp_program_version =  "KSSD version 3";
+const char *argp_program_version = "KSSD3A " KSSD_VERSION " (source " KSSD_SOURCE_COMMIT "; " KSSD_SOURCE_STATUS "; checkout " KSSD_CHECKOUT_STATUS ")";
 const char *argp_program_bug_address = "yhg926@gmail.com";
 //argp_err_exit_status = 1;
 

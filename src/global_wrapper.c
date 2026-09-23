@@ -1,6 +1,7 @@
 /*use by global cmd only*/
 #include "global_wrapper.h"
 #include "global_basic.h"
+#include "build_version.h"
 #include "command_shuffle.h"
 #include "command_sketch_wrapper.h"
 #include "command_dist_wrapper.h" //#include "command_align_wrapper.h"
@@ -183,6 +184,11 @@ static void run_global_doctor(const char *prog)
 
   printf("\nKSSD3 doctor\n\n");
   printf("Version: %s\n", argp_program_version ? argp_program_version : "unknown");
+  printf("Source snapshot: %s\n", KSSD_SOURCE_SNAPSHOT);
+  printf("Checkout: %s (%s)\n", KSSD_CHECKOUT_COMMIT, KSSD_CHECKOUT_STATUS);
+  printf("Compiler: %s\n", __VERSION__);
+  printf("Build flags: %s\n", KSSD_BUILD_FLAGS);
+  printf("Word size: %zu bits\n", sizeof(void *) * 8);
   printf("Invocation: %s\n", prog);
 
 #ifdef _OPENMP
@@ -302,6 +308,3 @@ void cmd_global(int argc, char**argv)
   struct arg_global global = {  };
   argp_parse(&argp, argc, argv, ARGP_IN_ORDER, &argc, &global);
 }
-
-
-

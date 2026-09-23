@@ -1,0 +1,26 @@
+name: Native CLI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        flags: [default, external-cflags]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y build-essential zlib1g-dev python3
+      - name: Default build
+        if: matrix.flags == 'default'
+        run: make -j2
+      - name: Build with caller CFLAGS
+        if: matrix.flags == 'external-cflags'
+        run: make -j2 CFLAGS='-O2 -std=gnu11'
+      - name: Smoke, CLI, docs, and tutorial checks
+        run: make test

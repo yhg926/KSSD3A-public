@@ -1347,6 +1347,120 @@ int compute_matrix(matrix_opt_t *matrix_opt)
 	return 1;
 }
 
+static char *matrix_trim_list_line(char *line)
+{
+	while (*line && isspace((unsigned char)*line)) ++line;
+	char *end = line + strlen(line);
+	while (end > line && isspace((unsigned char)end[-1])) *--end = '\0';
+	return line;
+}
+
+static void matrix_check_query_list_compatible(const dim_sketch_stat_t *expected,
+												 const dim_sketch_stat_t *actual,
+												 const char *dir)
+{
+	if (expected->hash_id != actual->hash_id ||
+		expected->koc != actual->koc ||
+		expected->conflict != actual->conflict ||
+		expected->coden_len != actual->coden_len ||
+		expected->klen != actual->klen ||
+		expected->hclen != actual->hclen ||
+		expected->holen != actual->holen ||
+		expected->drfold != actual->drfold)
+		errx(EINVAL, "--query-sketch-list entry is incompatible with the first entry: %s", dir);
+}
+
+static unify_sketch_t *matrix_load_query_sketch_list(const char *list_path)
+{
+	FILE *fp = fopen(list_path, "r");
+	if (!fp) err(errno, "open failed for %s", list_path);
+	unify_sketch_t **parts = NULL;
+	size_t n_parts = 0, cap_parts = 0, total_samples = 0, total_entries = 0;
+	dim_sketch_stat_t expected = {0};
+	char *line = NULL;
+	size_t line_cap = 0;
+	while (getline(&line, &line_cap, fp) >= 0) {
+		char *dir = matrix_trim_list_line(line);
+		if (!*dir || *dir == '#') continue;
+		unify_sketch_t *part = generic_sketch_parse(dir, SKETCH_PARSE_NONE);
+		if (part->stat_type != 2) {
+			free_unify_sketch(part);
+			errx(EINVAL, "--query-sketch-list currently requires -T sketches: %s", dir);
+		}
+		if (n_parts == 0) expected = part->stats.lco_stat_val;
+		else matrix_check_query_list_compatible(&expected, &part->stats.lco_stat_val, dir);
+		const size_t part_entries = (size_t)part->sketch_index[part->infile_num];
+		if ((size_t)part->infile_num > SIZE_MAX - total_samples ||
+			part_entries > SIZE_MAX - total_entries) {
+			free_unify_sketch(part);
+			errx(EOVERFLOW, "--query-sketch-list is too large");
+		}
+		if (n_parts == cap_parts) {
+			cap_parts = cap_parts ? cap_parts * 2 : 16;
+			parts = realloc(parts, cap_parts * sizeof(*parts));
+			if (!parts) err(EXIT_FAILURE, "realloc query sketch list");
+		}
+		parts[n_parts++] = part;
+		total_samples += (size_t)part->infile_num;
+		total_entries += part_entries;
+	}
+	free(line);
+	fclose(fp);
+	if (n_parts == 0) errx(EINVAL, "no query sketch directories listed in %s", list_path);
+	if (total_samples > (size_t)INT_MAX ||
+		total_samples > (SIZE_MAX - sizeof(dim_sketch_stat_t)) / PATHLEN ||
+		total_entries > SIZE_MAX / sizeof(uint64_t))
+		errx(EOVERFLOW, "--query-sketch-list is too large");
+
+	unify_sketch_t *merged = calloc(1, sizeof(*merged));
+	if (!merged) err(EXIT_FAILURE, "allocate merged query sketch");
+	merged->stat_type = 2;
+	merged->hash_id = expected.hash_id;
+	merged->conflict = expected.conflict;
+	merged->kmerlen = expected.klen;
+	merged->infile_num = (int)total_samples;
+	merged->stats.lco_stat_val = expected;
+	merged->stats.lco_stat_val.infile_num = merged->infile_num;
+	merged->mem_stat = calloc(1, sizeof(dim_sketch_stat_t) + total_samples * PATHLEN);
+	merged->comb_sketch = malloc((total_entries ? total_entries : 1) * sizeof(*merged->comb_sketch));
+	merged->sketch_index = calloc(total_samples + 1, sizeof(*merged->sketch_index));
+	if (!merged->mem_stat || !merged->comb_sketch || !merged->sketch_index)
+		err(EXIT_FAILURE, "allocate merged query sketch payload");
+	memcpy(merged->mem_stat, &merged->stats.lco_stat_val, sizeof(dim_sketch_stat_t));
+	merged->gname = (char (*)[PATHLEN])((char *)merged->mem_stat + sizeof(dim_sketch_stat_t));
+
+	size_t sample_offset = 0, entry_offset = 0;
+	for (size_t p = 0; p < n_parts; ++p) {
+		unify_sketch_t *part = parts[p];
+		const size_t part_samples = (size_t)part->infile_num;
+		const size_t part_entries = (size_t)part->sketch_index[part->infile_num];
+		for (size_t i = 0; i < part_samples; ++i) {
+			memcpy(merged->gname[sample_offset + i], part->gname[i], PATHLEN);
+			merged->sketch_index[sample_offset + i + 1] = entry_offset + part->sketch_index[i + 1];
+		}
+		if (part_entries)
+			memcpy(merged->comb_sketch + entry_offset, part->comb_sketch,
+				   part_entries * sizeof(*merged->comb_sketch));
+		sample_offset += part_samples;
+		entry_offset += part_entries;
+		free_unify_sketch(part);
+	}
+	free(parts);
+	return merged;
+}
+
+int compute_matrix_query_list(matrix_opt_t *matrix_opt)
+{
+	unify_sketch_t *ref_result = generic_sketch_parse(matrix_opt->refdir, SKETCH_PARSE_NONE);
+	unify_sketch_t *qry_result = matrix_load_query_sketch_list(matrix_opt->qrylist);
+	pairwise_check_compatible(ref_result, qry_result);
+	pairwise_prepare_lco_model(ref_result);
+	matrix_compute_dense(matrix_opt, ref_result, qry_result, false);
+	free_unify_sketch(ref_result);
+	free_unify_sketch(qry_result);
+	return 1;
+}
+
 #define CONFLICT_OBJ (0)
 KHASH_MAP_INIT_INT64(u64, uint64_t)
 int compute_ani_matrix(matrix_opt_t *matrix_opt)

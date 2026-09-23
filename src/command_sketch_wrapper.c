@@ -71,7 +71,8 @@ enum
   SKETCH_DEDUP_INDEX_SAMPLE_STEP = 909,
   SKETCH_DROP_POSITION = 910,
   SKETCH_DEDUP_STRATEGY = 911,
-  SKETCH_UNIQUE_INDEX = 912
+  SKETCH_UNIQUE_INDEX = 912,
+  SKETCH_SEPARATE_OUTPUTS = 913
 };
 
 static struct argp_option opt_sketch[] =
@@ -109,6 +110,7 @@ static struct argp_option opt_sketch[] =
 
         {0, 0, 0, 0, "Sample layout:", SKETCH_GROUP_LAYOUT},
         {"asone", 'a', 0, 0, "Treat input genomes as parts of one final genome.", SKETCH_GROUP_LAYOUT},
+        {"separate", SKETCH_SEPARATE_OUTPUTS, 0, 0, "Write one sketch directory per input under -o, with query_sketches.txt.", SKETCH_GROUP_LAYOUT},
         {"splitmfa", 888, 0, 0, "Treat a multi-FASTA file as many genomes.", SKETCH_GROUP_LAYOUT},
 
         {0, 0, 0, 0, "Inspection modes:", SKETCH_GROUP_INSPECT},
@@ -146,6 +148,7 @@ static char doc_sketch[] =
     "Examples:\n"
     "  kssd3a sketch -o ref_sketches refs/*.fasta\n"
     "  kssd3a sketch -f8 -p8 -o qry_sketches queries/*.fq.gz\n"
+    "  kssd3a sketch -T -f8 --separate -o query_batch queries/*.fq.gz\n"
     "  samtools fastq reads.bam | kssd3a sketch --conflict -o reads_sketch -\n"
     "  kssd3a sketch --pipecmd 'samtools fastq {}' --conflict \\\n"
     "    -o reads_sketch reads.bam\n"
@@ -225,6 +228,7 @@ sketch_opt_t sketch_opt = {
     .ncap = 0,
     .reads_qc = false,
     .asone = 0,    // treat input genomes as parts of final genome.
+    .separate_outputs = false,
     .p = 1,         // threads num: p
     .abundance = 0, // no abundance
     .conflict = 0, // no conflict context-objet.
@@ -306,6 +310,11 @@ static error_t parse_sketch(int key, char *arg, struct argp_state *state)
   case 'a':
   {
     sketch_opt.asone = 1;
+    break;
+  }
+  case SKETCH_SEPARATE_OUTPUTS:
+  {
+    sketch_opt.separate_outputs = true;
     break;
   }
   case 'f':
@@ -557,6 +566,17 @@ static error_t parse_sketch(int key, char *arg, struct argp_state *state)
                      + (sketch_opt.unique_index[0] != '\0' ? 1 : 0);
     if (mode_count > 1)
       argp_error(state, "Use only one of --merge, --append, --remove, --keep, --dedup, --sketchQC, --psmp/--psketch/--pindex/--ppos, -i/--index, or --unique-index.");
+    if (sketch_opt.separate_outputs)
+    {
+      if (mode_count != 0)
+        argp_error(state, "--separate only accepts raw FASTA/FASTQ inputs.");
+      if (!sketch->outdir_seen)
+        argp_error(state, "--separate requires -o/--outdir to name its parent directory.");
+      if (sketch_opt.asone || sketch_opt.split_mfa)
+        argp_error(state, "--separate cannot be combined with --asone or --splitmfa.");
+      if (sketch_opt.pipecmd != NULL)
+        argp_error(state, "--separate does not support --pipecmd streaming inputs.");
+    }
     if (sketch->dedup_metric_seen && !sketch_opt.dedup_comblco)
       argp_error(state, "--metric is currently only used with --dedup.");
     if (sketch->dedup_strategy_seen && !sketch_opt.dedup_comblco)
@@ -1052,6 +1072,86 @@ int cmd_sketch(struct argp_state *state)
         errx(EXIT_FAILURE, "stdin input '-' can be used only once");
       if ((stdin_count > 0 || sketch_opt.pipecmd != NULL) && sketch_opt.split_mfa)
         errx(EXIT_FAILURE, "--splitmfa does not support '-' or --pipecmd streaming inputs");
+      if (sketch_opt.separate_outputs)
+      {
+        if (stdin_count != 0)
+          errx(EINVAL, "--separate does not support stdin input '-'");
+
+        struct stat out_stat;
+        if (lstat(sketch_opt.outdir, &out_stat) == 0 && !S_ISDIR(out_stat.st_mode))
+          errx(EINVAL, "--separate output path exists but is not a directory: %s", sketch_opt.outdir);
+        if (lstat(sketch_opt.outdir, &out_stat) != 0 && errno != ENOENT)
+          err(errno, "cannot stat --separate output directory %s", sketch_opt.outdir);
+        if (mkdir_p(sketch_opt.outdir) != 0)
+          err(errno, "cannot create --separate output directory %s", sketch_opt.outdir);
+
+        char *manifest = format_string("%s/query_sketches.txt", sketch_opt.outdir);
+        if (!manifest)
+          err(EXIT_FAILURE, "cannot allocate --separate manifest path");
+        if (access(manifest, F_OK) == 0)
+          errx(EEXIST, "--separate manifest already exists: %s", manifest);
+        if (errno != ENOENT)
+          err(errno, "cannot check --separate manifest %s", manifest);
+
+        for (int i = 0; i < infile_stat->infile_num; ++i)
+        {
+          const char *base_i = strrchr(infile_stat->organized_infile_tab[i].fpath, '/');
+          base_i = base_i ? base_i + 1 : infile_stat->organized_infile_tab[i].fpath;
+          if (!base_i[0] || strcmp(base_i, ".") == 0 || strcmp(base_i, "..") == 0)
+            errx(EINVAL, "--separate cannot derive an output directory from %s",
+                 infile_stat->organized_infile_tab[i].fpath);
+          for (int j = 0; j < i; ++j)
+          {
+            const char *base_j = strrchr(infile_stat->organized_infile_tab[j].fpath, '/');
+            base_j = base_j ? base_j + 1 : infile_stat->organized_infile_tab[j].fpath;
+            if (strcmp(base_i, base_j) == 0)
+              errx(EINVAL, "--separate input basenames collide: %s and %s",
+                   infile_stat->organized_infile_tab[j].fpath,
+                   infile_stat->organized_infile_tab[i].fpath);
+          }
+        }
+
+        for (int i = 0; i < infile_stat->infile_num; ++i)
+        {
+          const char *base = strrchr(infile_stat->organized_infile_tab[i].fpath, '/');
+          base = base ? base + 1 : infile_stat->organized_infile_tab[i].fpath;
+          char *sample_outdir = format_string("%s/%s", sketch_opt.outdir, base);
+          if (!sample_outdir)
+            err(EXIT_FAILURE, "cannot allocate --separate sample output path");
+          if (access(sample_outdir, F_OK) == 0)
+            errx(EEXIST, "--separate sample output already exists: %s", sample_outdir);
+          if (errno != ENOENT)
+            err(errno, "cannot check --separate sample output %s", sample_outdir);
+
+          infile_tab_t one_input = {
+              .infile_num = 1,
+              .organized_infile_tab = &infile_stat->organized_infile_tab[i],
+          };
+          sketch_opt_t one_opt = sketch_opt;
+          one_opt.asone = false;
+          one_opt.separate_outputs = false;
+          sketch_compute_inputs_to_dir(&one_opt, &one_input, sample_outdir);
+          free(sample_outdir);
+        }
+
+        FILE *manifest_fp = fopen(manifest, "w");
+        if (!manifest_fp)
+          err(errno, "cannot write --separate manifest %s", manifest);
+        for (int i = 0; i < infile_stat->infile_num; ++i)
+        {
+          const char *base = strrchr(infile_stat->organized_infile_tab[i].fpath, '/');
+          base = base ? base + 1 : infile_stat->organized_infile_tab[i].fpath;
+          if (fprintf(manifest_fp, "%s/%s\n", sketch_opt.outdir, base) < 0)
+            err(errno, "cannot write --separate manifest %s", manifest);
+        }
+        if (fclose(manifest_fp) != 0)
+          err(errno, "cannot close --separate manifest %s", manifest);
+        printf("Built %d separate sketches in %s; list=%s\n",
+               infile_stat->infile_num, sketch_opt.outdir, manifest);
+        free(manifest);
+        sketch_free_infile_tab(infile_stat);
+        return 1;
+      }
       FILTER = UINT32_MAX >> sketch_opt.drfold;
       /* conditionally initilize some comblco_stat_one members*/
       if(sketch_opt.coden_ctxobj_pattern){

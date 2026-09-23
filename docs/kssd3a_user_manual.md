@@ -1,8 +1,9 @@
 # KSSD3A User Manual
 
-This manual is an initial standalone user guide for `kssd3a`. It is written as
-an independent Markdown file so it can later be copied to a GitHub Wiki, a
-documentation site, or packaged as online help.
+This is the native CLI reference for KSSD3A. Start with the
+[ten-minute tutorial](quickstart.md) or choose a task in the
+[workflow guide](workflows.md). This file is the canonical manual in the
+mother repository and is exported unchanged to the public repository.
 
 For exact option spelling in a specific build, the built-in help remains the
 most direct reference:
@@ -12,6 +13,8 @@ kssd3a --help
 kssd3a sketch --help
 kssd3a ani --help
 kssd3a set --help
+kssd3a matrix --help
+kssd3a place --help
 ```
 
 ## Contents
@@ -24,6 +27,7 @@ kssd3a set --help
 - [6. ANI Workflows](#6-ani-workflows)
 - [7. ANI Detail Output Columns](#7-ani-detail-output-columns)
 - [8. Matrix Command](#8-matrix-command)
+- [8.1 Experimental Placement Command](#81-experimental-placement-command)
 - [9. Set Command](#9-set-command)
 - [10. Environment Variables](#10-environment-variables)
 - [11. Practical Recipes](#11-practical-recipes)
@@ -56,6 +60,10 @@ boundary is still the sketch directory. Pre-sketching is recommended for large
 or repeated analyses.
 
 ## 2. Installation And Build
+
+The tested build path is Linux with GCC (OpenMP), GNU Make, and zlib development
+headers. Python 3 is needed for tests/tutorial checks, not normal CLI use.
+Bash completion requires Bash 4 or newer. See [quickstart](quickstart.md).
 
 Build from source:
 
@@ -92,7 +100,10 @@ To run tests:
 make test
 ```
 
-The public test target runs the standalone CLI smoke test suite.
+The public `make test` target runs native smoke tests, CLI regression tests,
+documentation/completion checks, and the bundled tutorial. In the mother
+repository, `make test-cli` runs these same checks; `make test` additionally
+runs the Python wrapper and browser contract tests.
 
 To inspect smoke-test outputs:
 
@@ -130,6 +141,8 @@ sudo make PREFIX=/usr/local install_completion
 | `set` | Run set operations, grouping, and marker database creation. |
 | `examples` | Print common command workflows. |
 | `doctor` | Check build/runtime environment basics. |
+| `place` | Experimental tree placement; see section 8.1. |
+| `composite` | Abundance-related sketch composition operations; see `--help`. |
 
 Compatibility/advanced subcommands such as `dist`, `shuffle`, and `reverse`
 are retained for older workflows. For new sketches produced by this release,
@@ -139,6 +152,15 @@ cofile-style inputs and should not be used as the normal command for current
 KSSD3A sketch directories.
 
 ## 4. Core Concepts
+
+### Build Identity
+
+`kssd3a --version` reports the release label, source commit, and clean/dirty
+state captured at build time. `kssd3a doctor` adds compiler/build details
+and, for public exports, the source-content snapshot hash. Keep this output
+with commands and input checksums. A development label or dirty source is
+not a frozen scientific release. `SOURCE_COMMIT` and
+`PUBLIC_EXPORT_MANIFEST.tsv` record exported source provenance.
 
 ### 4.1 Sketch Directories
 
@@ -227,7 +249,7 @@ after the OS page cache is warm. Forcing a sorted reference index can be faster
 in some cases, but it can use tens of GiB of RSS/page cache and is not the
 default low-memory strategy.
 
-The focused execution note is in [`docs/kssd3a_ani_execution_strategy.md`](docs/kssd3a_ani_execution_strategy.md).
+The focused execution note is in [`docs/kssd3a_ani_execution_strategy.md`](kssd3a_ani_execution_strategy.md).
 
 ## 5. Sketching
 
@@ -325,6 +347,14 @@ Treat multiple inputs as one final sample:
 
 ```bash
 kssd3a sketch --asone -f8 -o combined_sample lane1.fq.gz lane2.fq.gz
+```
+
+Keep unrelated inputs as independent one-sample sketch directories. The batch
+directory receives `query_sketches.txt`, ready for `matrix --query-sketch-list`
+and `place --query-sketch-list`:
+
+```bash
+kssd3a sketch -T -f8 --separate -o query_batch samples/*.fq.gz
 ```
 
 Treat each FASTA record in a multi-FASTA file as a sample:
@@ -552,6 +582,42 @@ After append, remove, keep, or dedup, any stale sorted reference index is
 invalidated and should be rebuilt with `kssd3a sketch -i` if needed.
 
 ## 6. ANI Workflows
+
+### Named Options And Units
+
+New named options are equivalent to the numeric selectors and do not change
+distance formulas or raw-query guards:
+
+| Named metric | Existing selector |
+| --- | --- |
+| `--metric best` | `-s 1` |
+| `--metric recalibrated` | `-s 2` |
+| `--metric ctx-moe` | `-s 3` |
+| `--metric ctx-naive` | `-s 4` |
+| `--metric mash` | `-s 5` |
+| `--metric aaf` | `-s 6` |
+| `--metric mash-if-far` | `-s 7` |
+| `--metric aaf-if-far` | `-s 8` |
+| `--metric p_dist` | `-s 9` |
+
+`--format detail|matrix|triangle` corresponds to `-m 0|1|2`.
+For matrix/triangle output, select `--values distance` or `--values ani`
+explicitly. Without `--values`, the existing sign rule is retained:
+positive `-s` yields distance, negative `-s` yields ANI. An explicit
+`--values` takes precedence over that sign regardless of argument order.
+Detail output always contains both ANI and distance.
+
+`--anicut` and `--afcut` require fractions in [0,1], not percentages.
+Use `--anicut 0.95`, never `--anicut 95`. Out-of-range and non-finite
+values now fail with a clear error instead of silently filtering all hits.
+A distance of 0.001 is 0.1% divergence; an ANI of 0.999 is 99.9%.
+Do not interpret sketch-derived distance as an exact SNP count.
+
+```bash
+kssd3a ani -r ref_sketches -q qry_sketches --metric best \
+  --format matrix --values ani -o ani_matrix.tsv
+```
+
 
 ### 6.1 Assembly-To-Assembly
 
@@ -1070,16 +1136,119 @@ matrix data remain clean.
 sets that value. `--exception FLOAT` is the value used when a pair has no
 overlap or an undefined distance.
 
-The intended workflow is:
+Dedup plans are read-only. Apply the reviewed `--keep-out` list to a new
+sketch with `sketch --keep ... -o ...`; no planned/unavailable apply command
+is needed.
+
+### 8.1 Experimental Placement Command
+
+`place` maps query sketches onto edges of an existing species backbone tree.
+This command is experimental. It does not build the tree; use `matrix` plus a
+tree builder such as FastME to create the species backbone first.
+
+For paired-end mates or lane files from one biological query, build the query
+sketch with `--asone` so the files become one sketch sample:
 
 ```bash
-kssd3a matrix --format dedup-plan ... -o plan.tsv ref_sketches
-# review plan.tsv
-# later: kssd3a sketch --apply-dedup plan.tsv -o dedup_ref ref_sketches
+kssd3a sketch -T -f8 -A --conflict --anno --asone \
+  -l query_mates_or_lanes.paths -o query_Tf8
 ```
 
-`sketch --apply-dedup` and `sketch --split` are planned apply modes; current
-`sketch --dedup` remains the immediate in-place/copy convenience command.
+Do not use `--asone` on a list containing unrelated biological samples, because
+all listed files are merged into one final sketch sample.
+
+The recommended placement distance input is a query-vs-reference matrix from
+`matrix` with the low-divergence `p_dist` metric. This keeps the workflow
+compatible with APPLES-like distance-matrix pipelines:
+
+```bash
+kssd3a matrix -r species_ref_Tf8 -q query_Tf8 \
+  --format full --metric p_dist -o query_vs_ref_pdist.matrix.tsv
+```
+
+`place --distances` accepts matrix inputs and the older ANI detail table.
+Supported formats are:
+
+| Format | Description |
+| --- | --- |
+| `matrix` | Tabular rectangular matrix from `kssd3a matrix -r REF -q QRY --format full --metric p_dist`. Query names are rows and reference names are columns. |
+| `phylip` | Square PHYLIP distance matrix containing both query and reference labels. Reference labels may be idmap IDs or sample names. |
+| `ani` | Long diagnostic table with `Qry`, `Ref`, and `Distance` columns. This is produced by `kssd3a ani -s 9 -n 0 -f 0 -t 0`. |
+
+The default `--distance-format auto` detects these formats from the first line.
+Use `--distance-format matrix` or `--distance-format phylip` when an external
+matrix file is ambiguous.
+
+Then run placement:
+
+```bash
+kssd3a place \
+  --tree species_backbone.nwk \
+  --idmap species_ref.idmap.tsv \
+  --distances query_vs_ref_pdist.matrix.tsv \
+  --distance-format matrix \
+  --ref-sketch species_ref_Tf8 \
+  --query-sketch query_Tf8 \
+  --rank-by sparse \
+  --candidate-near 0 \
+  --sparse-nearest 200 \
+  --top 5 \
+  --threads 8 \
+  --out placement.tsv \
+  --jplace-out placement.jplace \
+  --pairwise-out placement_pairwise.tsv
+```
+
+For independently sketched query samples, `--query-sketch-list` accepts one
+query sketch directory per non-comment line. `place` validates that all listed
+sketches are compatible, combines their query payloads in memory, and loads the
+reference backbone once. Sample labels and order are read from each sketch's
+metadata and must match the matrix rows; it is mutually exclusive with
+`--query-sketch`.
+
+```bash
+printf '%s\n' query_001_Tf8 query_002_Tf8 > query_sketches.txt
+kssd3a matrix -r species_ref_Tf8 --query-sketch-list query_sketches.txt \
+  --format full --metric p_dist -o query_vs_ref_pdist.matrix.tsv
+kssd3a place ... --query-sketch-list query_sketches.txt
+```
+
+For `ani` long-table input, only `Qry`, `Ref`, and `Distance` are required;
+other columns are ignored. For tabular matrix input, the first row names
+reference columns and the first column names query rows. `--idmap` maps Newick
+leaf IDs to the sample names used in the distance table or matrix. If sparse
+evidence is requested, query names are read from the sketch metadata;
+`--query-paths` remains available only as a legacy assertion whose labels
+must exactly match the sketch metadata count and order.
+
+Important output columns include:
+
+| Column | Meaning |
+| --- | --- |
+| `edge_child`, `edge_label` | Predicted tree edge identifier; `edge_child` is also used as the jplace `edge_num`. |
+| `nearest_ref`, `nearest_p_dist` | Nearest reference from the distance table. |
+| `wls_score` | Weighted least-squares residual for the edge. |
+| `wls_rel_weight` | Relative WLS support among tested candidate edges. |
+| `wls_top_weight`, `wls_second_weight` | Query-level top and second WLS relative supports. |
+| `wls_entropy` | Normalized entropy of WLS relative support. |
+| `sparse_score_per_ctx` | Sparse object evidence normalized by informative context count. |
+| `warnings` | Diagnostic warnings such as `AMBIGUOUS_WLS`. |
+
+Optional placement geometry outputs:
+
+| Option | Output |
+| --- | --- |
+| `--jplace-out FILE` | APPLES/pplacer-style jplace JSON with fields `edge_num`, `likelihood`, `like_weight_ratio`, `distal_length`, and `pendant_length`. The reported likelihood is negative WLS residual, not a true phylogenetic likelihood. |
+| `--pairwise-out FILE` | Rank-1 query-to-query p_dist table inferred as `pendant1 + backbone_path + pendant2`. |
+
+The placement TSV alone is enough to inspect the selected edge and local branch
+coordinates. To reconstruct distances between placements on different edges, use
+the same backbone tree or the jplace output, because the tree topology and branch
+lengths are required. The relative WLS support fields are useful diagnostics but
+are not calibrated posterior probabilities. For near-identical strain placement
+with `-T -f8` sketches, use `--rank-by sparse`; keep a secondary
+`--rank-by rank_sum` or `--rank-by wls` run as a QA check when edge ambiguity
+matters.
 
 ## 9. Set Command
 

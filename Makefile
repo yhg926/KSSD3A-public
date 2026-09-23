@@ -6,6 +6,7 @@ ARCH_FLAGS ?=
 OMPFLAGS ?= -fopenmp
 CFLAGS ?= $(CSTD) $(WARNFLAGS) $(OPTFLAGS)
 KSSD_CFLAGS = $(CFLAGS) $(ARCH_FLAGS) $(OMPFLAGS)
+KSSD_CPPFLAGS = $(CPPFLAGS) -I$(ROOT)/klib -I$(OBJDIR)
 LDFLAGS ?=
 LDLIBS ?= -lz -lm
 
@@ -46,16 +47,21 @@ DEPS := $(OBJS:.o=.d)
 $(TARGET): $(OBJS) | $(BINDIR)
 	$(CC) $(KSSD_CFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
-$(KLIB_OBJS): CFLAGS += -Iklib
+$(OBJDIR)/kssd3.o $(OBJDIR)/global_wrapper.o: $(OBJDIR)/build_version.h
+
+$(OBJDIR)/build_version.h: FORCE | $(OBJDIR)
+	@sh "$(ROOT)/build/version.sh" "$(ROOT)" "$@" "$(KSSD_CFLAGS)"
+
+FORCE:
 
 $(OBJDIR) $(BINDIR):
 	mkdir -p $@
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
-	$(CC) $(KSSD_CFLAGS) -MMD -MP -c $< -o $@
+	$(CC) $(KSSD_CPPFLAGS) $(KSSD_CFLAGS) -MMD -MP -c $< -o $@
 
 $(OBJDIR)/%.o: klib/%.c | $(OBJDIR)
-	$(CC) $(KSSD_CFLAGS) -Iklib -MMD -MP -c $< -o $@
+	$(CC) $(KSSD_CPPFLAGS) $(KSSD_CFLAGS) -MMD -MP -c $< -o $@
 
 clean:
 	rm -f $(TARGET) $(OBJS) $(DEPS)
@@ -84,8 +90,13 @@ completion:
 test-smoke: all
 	"$(ROOT)/tests/smoke_main.sh"
 
-test: test-smoke
+test-cli: test-smoke
+	python3 "$(ROOT)/tests/test_cli_usability.py" "$(TARGET)"
+	python3 "$(ROOT)/tests/check_cli_docs.py" "$(TARGET)"
+	bash "$(ROOT)/examples/tutorial.sh" "$(TARGET)"
+
+test: test-cli
 
 -include $(DEPS)
 
-.PHONY: all native avx2 clean install install_completion uninstall install_env completion test-smoke test
+.PHONY: all native avx2 clean install install_completion uninstall install_env completion test-smoke test-cli test FORCE

@@ -61,6 +61,7 @@ typedef struct matrix_opt
 	bool ani;
 	double e;
   char qrydir[PATHLEN];
+	char qrylist[PATHLEN];
 	char refdir[PATHLEN];
   char outf[PATHLEN];
 	char edge_outf[PATHLEN];
@@ -82,5 +83,6 @@ typedef double (*Dist) (uint32_t,uint32_t,uint32_t,uint32_t);
 int cmd_matrix(struct argp_state* state);
 int compute_triangle(matrix_opt_t *);
 int compute_matrix(matrix_opt_t *);
+int compute_matrix_query_list(matrix_opt_t *);
 int compute_ani_matrix(matrix_opt_t *matrix_opt);
 #endif
