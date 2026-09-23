@@ -2,13 +2,61 @@ name: Tagged source release
 on:
   push:
     tags: ['v*']
+    branches: [master]
+    paths: ['.github/release-request.json']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing annotated release tag
+        required: true
+      commit:
+        description: Full public commit expected for this tag
+        required: true
 permissions:
   contents: read
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
+      commit: ${{ steps.identity.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve an explicit immutable release request
+        id: identity
+        env:
+          EVENT_KIND: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_COMMIT: ${{ inputs.commit }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+          if os.environ['EVENT_KIND'] == 'workflow_dispatch':
+              tag, commit = os.environ['INPUT_TAG'], os.environ['INPUT_COMMIT']
+          elif os.environ['GITHUB_REF'].startswith('refs/tags/'):
+              tag, commit = os.environ['GITHUB_REF_NAME'], os.environ['GITHUB_SHA']
+          else:
+              request = json.loads(Path('.github/release-request.json').read_text())
+              tag, commit = request['tag'], request['commit']
+          assert re.fullmatch(r'v\d+\.\d+\.\d+', tag)
+          assert re.fullmatch(r'[0-9a-f]{40}', commit)
+          # Fetch the original tag object, not checkout's peeled commit ref.
+          subprocess.run(['git', 'fetch', '--force', 'origin', f'refs/tags/{tag}:refs/tags/{tag}'], check=True)
+          git = lambda *args: subprocess.check_output(['git', *args], text=True).strip()
+          assert git('cat-file', '-t', 'refs/tags/' + tag) == 'tag'
+          assert git('rev-parse', 'refs/tags/' + tag + '^{commit}') == commit
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'tag={tag}\ncommit={commit}\n')
+          PY
   test:
+    needs: resolve
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -17,6 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.resolve.outputs.commit }}
           fetch-depth: 0
           persist-credentials: false
       - name: Install build prerequisites
@@ -37,33 +86,40 @@ jobs:
             make test
           fi
   publish:
-    needs: test
+    needs: [resolve, test]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.resolve.outputs.commit }}
           fetch-depth: 0
           persist-credentials: false
       - name: Install build prerequisites
         run: sudo apt-get update && sudo apt-get install -y build-essential zlib1g-dev python3
       - name: Build and package the tagged source
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
         run: |
+          git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
           make -j2
-          python3 build/release_assets.py --tag "$RELEASE_TAG" --output "$RUNNER_TEMP/release-assets"
+          if ! python3 build/release_assets.py --tag "$RELEASE_TAG" --output "$RUNNER_TEMP/release-assets" > "$RUNNER_TEMP/package.log" 2>&1; then
+            cat "$RUNNER_TEMP/package.log"
+            tail -n 1 "$RUNNER_TEMP/package.log" | sed 's/^/::error::/'
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/package.log"
       - name: Preserve verified artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ github.ref_name }}
+          name: release-${{ needs.resolve.outputs.tag }}
           path: ${{ runner.temp }}/release-assets/
       - name: Publish without replacing an existing release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo 'Release already exists; refusing to replace its assets.' >&2
