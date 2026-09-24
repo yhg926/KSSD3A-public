@@ -13,6 +13,8 @@ import shutil
 import subprocess
 import tempfile
 
+RELEASE_VERSION_RE = r'\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?'
+
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -53,10 +55,16 @@ def verify_manifest(root):
     return identity, set(hashes) | {'PUBLIC_EXPORT_MANIFEST.tsv'}
 
 
+def release_kind(version, tag):
+    """Validate an immutable stable or release-candidate source tag."""
+    if not re.fullmatch(RELEASE_VERSION_RE, version) or tag != 'v' + version:
+        raise ValueError('Tag must match a stable or release-candidate VERSION label')
+    return 'prerelease' if '-rc.' in version else 'stable'
+
+
 def package(root, tag, output):
     version = (root / 'VERSION').read_text().strip()
-    if not re.fullmatch(r'\d+\.\d+\.\d+', version) or tag != 'v' + version:
-        raise ValueError('Tag must match a final VERSION label')
+    release_kind(version, tag)
     if output.exists() or output.is_relative_to(root):
         raise ValueError('Use a new output directory outside the checkout')
     if run(root, 'git', 'status', '--porcelain', '--untracked-files=all'):

@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.1.1-dev (Unreleased)
+## 3.1.1-rc.1 (Pre-release)
 
 - Reject missing mandatory CLI arguments with exit status 64 and diagnostics
   on stderr; propagate `place` failure status through command dispatch.
@@ -17,6 +17,9 @@
   distance 2 / ANI -1 are unambiguous sentinels. Numeric defaults are unchanged.
 
 The published `v3.1.0` tag and its benchmarking records remain unchanged.
+
+This release candidate is a tested software checkpoint for follow-up review;
+it is not a new frozen scientific benchmark baseline.
 
 ## 3.1.0 (2026-09-23)
 

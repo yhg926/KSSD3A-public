@@ -65,6 +65,17 @@ class ReleaseManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Tag must match'):
             RELEASE.package(self.root, 'v9.9.9', self.root.parent / 'unused-assets')
 
+    def test_release_candidate_label(self):
+        self.assertEqual(RELEASE.release_kind('3.1.1', 'v3.1.1'), 'stable')
+        self.assertEqual(RELEASE.release_kind('3.1.1-rc.1', 'v3.1.1-rc.1'), 'prerelease')
+        for version, tag in [('3.1.1-dev', 'v3.1.1-dev'),
+                             ('3.1.1-rc.0', 'v3.1.1-rc.0'),
+                             ('3.1.1-rc.1', 'v3.1.1'),
+                             ('3.1.1-rc.1-extra', 'v3.1.1-rc.1-extra')]:
+            with self.subTest(version=version, tag=tag):
+                with self.assertRaisesRegex(ValueError, 'Tag must match'):
+                    RELEASE.release_kind(version, tag)
+
     def test_existing_output_not_overwritten(self):
         with self.assertRaisesRegex(ValueError, 'new output directory'):
             RELEASE.package(self.root, 'v3.1.0', self.root)

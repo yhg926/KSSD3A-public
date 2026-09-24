@@ -90,7 +90,7 @@ WASM, research/manuscript records, and internal maintenance scripts.
 `PUBLIC_EXPORT_MANIFEST.tsv` contains SHA-256 hashes of exported files.
 A dirty development snapshot is not a frozen release.
 
-## Frozen Benchmark Version
+## Frozen Benchmark And Pre-release Versions
 
 Use the `v3.1.0` tag for this release, not the changing `master` branch:
 
@@ -116,6 +116,11 @@ flags, complete commands, metric, fold/pattern, filtering options, thread
 counts, seeds, and input/database checksums. Record these outside this code
 repository. This release is a software baseline, not a scientific accuracy
 claim. Later fixes get new tags; existing release tags must not be moved.
+
+Tags of the form `vX.Y.Z-rc.N` are tested GitHub prereleases for software
+review. They are immutable and package the same way as stable tags, but they
+do not replace a frozen benchmark version until a separate stable `vX.Y.Z`
+release is made.
 
 ## License
 

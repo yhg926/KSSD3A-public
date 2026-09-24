@@ -23,6 +23,7 @@ jobs:
     outputs:
       tag: ${{ steps.identity.outputs.tag }}
       commit: ${{ steps.identity.outputs.commit }}
+      prerelease: ${{ steps.identity.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,7 +46,7 @@ jobs:
           else:
               request = json.loads(Path('.github/release-request.json').read_text())
               tag, commit = request['tag'], request['commit']
-          assert re.fullmatch(r'v\d+\.\d+\.\d+', tag)
+          assert re.fullmatch(r'v\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?', tag)
           assert re.fullmatch(r'[0-9a-f]{40}', commit)
           # Fetch the original tag object, not checkout's peeled commit ref.
           subprocess.run(['git', 'fetch', '--force', 'origin', f'refs/tags/{tag}:refs/tags/{tag}'], check=True)
@@ -54,6 +55,7 @@ jobs:
           assert git('rev-parse', 'refs/tags/' + tag + '^{commit}') == commit
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f'tag={tag}\ncommit={commit}\n')
+              output.write(f'prerelease={str("-rc." in tag).lower()}\n')
           PY
   test:
     needs: resolve
@@ -120,10 +122,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          RELEASE_PRERELEASE: ${{ needs.resolve.outputs.prerelease }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo 'Release already exists; refusing to replace its assets.' >&2
             exit 1
           fi
+          extra=()
+          if [ "$RELEASE_PRERELEASE" = "true" ]; then
+            extra+=(--prerelease)
+          fi
           gh release create "$RELEASE_TAG" --verify-tag --title "KSSD3A $RELEASE_TAG" \
-            --notes-file CHANGELOG.md "$RUNNER_TEMP/release-assets/"*
+            --notes-file CHANGELOG.md "${extra[@]}" "$RUNNER_TEMP/release-assets/"*
