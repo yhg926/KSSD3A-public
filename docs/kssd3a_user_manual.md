@@ -22,6 +22,7 @@ kssd3a place --help
 - [1. Overview](#1-overview)
 - [2. Installation And Build](#2-installation-and-build)
 - [3. Main Commands](#3-main-commands)
+- [3.1 Command Exit Status](#31-command-exit-status)
 - [4. Core Concepts](#4-core-concepts)
 - [5. Sketching](#5-sketching)
 - [6. ANI Workflows](#6-ani-workflows)
@@ -150,6 +151,19 @@ use `ani` for ANI estimates and `matrix` for distance matrices, sparse edges,
 clusters, and deduplication plans. The legacy `dist` command expects older
 cofile-style inputs and should not be used as the normal command for current
 KSSD3A sketch directories.
+
+### 3.1 Command Exit Status
+
+Successful commands, including explicit `--help`, return status `0`. Missing
+mandatory arguments, invalid option syntax, and invalid option values return
+status `64` (`EX_USAGE`) with a diagnostic on standard error. A common
+input-access failure, such as a missing input file, returns status `2`; other
+runtime or processing failures can use another nonzero status.
+
+For shell workflows, use `set -e`; when a KSSD3A command appears in a
+pipeline, also use `set -o pipefail` so an earlier failure is not hidden by a
+later successful command. Treat any nonzero status as failure rather than
+depending on one specific runtime-error code.
 
 ## 4. Core Concepts
 
