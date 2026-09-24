@@ -2,6 +2,8 @@
 """Regression tests for public CLI choices and reproducible version reporting."""
 import csv
 import io
+import os
+import random
 import subprocess
 import sys
 import tempfile
@@ -98,6 +100,147 @@ class CliUsability(unittest.TestCase):
         doctor = subprocess.check_output([str(BIN), 'doctor'], text=True)
         for label in ['Compiler:', 'Build flags:', 'OpenMP:', 'Source snapshot:']:
             self.assertIn(label, doctor)
+
+    def test_missing_arguments_fail_on_stderr(self):
+        commands = [[s] for s in ('sketch', 'ani', 'set', 'dist', 'place',
+                                  'matrix', 'composite', 'reverse', 'shuffle')]
+        commands += [['ani', '--pair', 'ref.fa'], ['ani', '--reflist', 'refs.txt'],
+                     ['ani', '-q', self.sketch], ['set', '--union'],
+                     ['set', self.sketch], ['dist', '-p1'],
+                     ['place', '--unknown'], ['place', '--tree']]
+        for args in commands:
+            with self.subTest(args=args):
+                result = subprocess.run([str(BIN), *args], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 64, result.stdout + result.stderr)
+                self.assertTrue(result.stderr)
+                self.assertEqual(result.stdout, '')
+
+    def test_help_is_successful(self):
+        for subcommand in ('sketch', 'ani', 'set', 'dist', 'place', 'matrix',
+                           'composite', 'reverse', 'shuffle'):
+            result = subprocess.run([str(BIN), subcommand, '--help'], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('Usage:', result.stdout)
+
+    def test_shell_stops_after_invalid_command(self):
+        result = subprocess.run(['bash', '-ec', '"$1" sketch; echo SHOULD_NOT_RUN',
+                                 'test', str(BIN)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 64)
+        self.assertNotIn('SHOULD_NOT_RUN', result.stdout)
+
+    def test_empty_input_list_fails(self):
+        path = Path(self.tmp.name) / 'empty-list.txt'
+        path.write_text('')
+        result = subprocess.run([str(BIN), 'sketch', '-l', str(path)],
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('no valid', result.stderr.lower())
+
+    def test_invalid_set_input_fails(self):
+        for args in (['--union'], ['-P'], ['--psketch']):
+            result = subprocess.run([str(BIN), 'set', *args, str(Path(self.tmp.name) / 'missing')],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue(result.stderr)
+        result = subprocess.run([str(BIN), 'set', '-P', self.sketch], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_dist_explains_modern_sketch_format(self):
+        for args in ([self.sketch], ['-r', self.sketch], ['-r', self.sketch, self.sketch]):
+            result = subprocess.run([str(BIN), 'dist', *args], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 64, result.stdout + result.stderr)
+            self.assertIn('legacy', result.stderr)
+            self.assertIn('cofiles.stat', result.stderr)
+            self.assertIn('ani', result.stderr)
+            self.assertIn('matrix', result.stderr)
+            self.assertNotIn('do not exists', result.stderr)
+
+    def test_unambiguous_matrix_exception(self):
+        for indexed in (False, True):
+            env = dict(os.environ, KSSD3A_ANI_MATRIX_DIRECT_THRESHOLD='0' if indexed else '1000')
+            for mode, sentinel in [('distance', '2.000000'), ('ani', '-1.000000')]:
+                result = subprocess.run([str(BIN), 'ani', '-q', self.sketch, '--format', 'matrix',
+                                         '--afcut', '1', '--exception', '2', '--values', mode],
+                                        env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                rows = list(csv.reader(io.StringIO(result.stdout), delimiter='\t'))
+                self.assertEqual(rows[1][2], sentinel)
+                self.assertEqual(rows[2][1], sentinel)
+
+    def test_merged_sample_label_does_not_change_data(self):
+        reads = [str(ROOT / 'examples/data/reads_R1.fq'), str(ROOT / 'examples/data/reads_R2.fq')]
+        plain, named = (Path(self.tmp.name) / x for x in ('plain-pair', 'named-pair'))
+        for path, extra in [(plain, []), (named, ['--sample-name', 'sample_01'])]:
+            subprocess.run([str(BIN), 'sketch', '--asone', '--conflict', '--position', '-A', '-f0', '-p2',
+                            *extra, '-o', str(path), *reads], check=True, capture_output=True)
+        self.assertEqual({p.name for p in plain.iterdir()}, {p.name for p in named.iterdir()})
+        for filename in (p.name for p in plain.iterdir() if p.name != 'lcofiles.stat'):
+            self.assertEqual((plain / filename).read_bytes(), (named / filename).read_bytes())
+        result = subprocess.check_output([str(BIN), 'sketch', '--psmp', str(named)], text=True)
+        self.assertIn('sample_01', result)
+        self.assertNotIn('reads_R1', result)
+        original = subprocess.check_output([str(BIN), 'sketch', '--psmp', str(plain)], text=True)
+        self.assertIn('reads_R1', original)
+
+    def test_sample_label_validation(self):
+        for args in (['--sample-name', 'sample'], ['--asone', '--sample-name', ''],
+                     ['--asone', '--sample-name', 'bad\tlabel'],
+                     ['--asone', '--sample-name', 'bad\nlabel'],
+                     ['--asone', '--sample-name', 'x' * 1000],
+                     ['--asone', '--sample-name', 'sample', '--splitmfa']):
+            result = subprocess.run([str(BIN), 'sketch', *args,
+                                     str(ROOT / 'examples/data/reference.fa')],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 64, result.stdout + result.stderr)
+
+
+class IdentityBoundary(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory(prefix='kssd3a-identity-')
+        cls.root = Path(cls.tmp.name)
+        rng = random.Random(20260923)
+        sequence = ''.join(rng.choices('ACGT', k=1_000_000))
+        cls.files = []
+        for name in ('ref', 'copy'):
+            path = cls.root / (name + '.fa')
+            path.write_text('>' + name + '\n' + sequence + '\n')
+            cls.files.append(str(path))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_identical_sketches_keep_exact_identity(self):
+        for fold in (0, 8):
+            sketch = self.root / ('f' + str(fold))
+            subprocess.run([str(BIN), 'sketch', '-f' + str(fold), '-p2', '-o', str(sketch),
+                            *self.files], check=True, capture_output=True)
+            for indexed in (False, True):
+                if indexed:
+                    subprocess.run([str(BIN), 'sketch', '-i', str(sketch)], check=True, capture_output=True)
+                for metric in ('best', 'recalibrated', 'ctx-moe', 'ctx-naive', 'p_dist'):
+                    result = subprocess.run([str(BIN), 'ani', '-r', str(sketch), '-q', str(sketch),
+                                             '--format', 'detail', '--metric', metric],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    rows = list(csv.DictReader(io.StringIO(result.stdout), delimiter='\t'))
+                    self.assertEqual(len(rows), 4)
+                    for row in rows:
+                        self.assertEqual(row['N_diff_obj_section'], '0')
+                        self.assertEqual(row['Distance'], '0.000000', (fold, indexed, metric, row))
+                        self.assertEqual(row['ANI'], '1.000000', (fold, indexed, metric, row))
+                    env = dict(os.environ,
+                               KSSD3A_ANI_MATRIX_DIRECT_THRESHOLD='0' if indexed else '1000')
+                    for mode, expected in [('distance', '0.000000'), ('ani', '1.000000')]:
+                        matrix = subprocess.run([str(BIN), 'ani', '-q', str(sketch),
+                                                 '--format', 'matrix', '--metric', metric,
+                                                 '--values', mode], env=env,
+                                                capture_output=True, text=True)
+                        self.assertEqual(matrix.returncode, 0, matrix.stderr)
+                        cells = list(csv.reader(io.StringIO(matrix.stdout), delimiter='\t'))
+                        self.assertEqual([r[1:] for r in cells[1:]], [[expected] * 2] * 2,
+                                         (fold, indexed, metric, mode, cells))
 
 
 if __name__ == '__main__':

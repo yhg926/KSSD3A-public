@@ -97,7 +97,7 @@ static struct argp_option opt_ani[] =
 
 		{0, 0, 0, 0, "Reporting and output:", ANI_GROUP_REPORT},
 		{"diagonal", 'd', 0, 0, "Set diagonal values.", ANI_GROUP_REPORT},
-		{"exception", 'e', "<INT>", 0, "Distance value to use when skipped. [1]", ANI_GROUP_REPORT},
+		{"exception", 'e', "<INT>", 0, "Missing/low-overlap matrix distance [1]; ANI uses 1-e. Use 2 for unambiguous sentinels (distance 2, ANI -1).", ANI_GROUP_REPORT},
 		{"glist", 'g', "<FILE>", 0, "Sample output file for KSSD set grouping.", ANI_GROUP_REPORT},
 		{"outfmt", 'm', "<0/1/2>", 0, "Output format: detail(0), matrix(1), or triangle(2). [0]", ANI_GROUP_REPORT},
 		{"format", ANI_FORMAT_NAME, "<NAME>", 0, "Output format: detail, matrix, or triangle; alias for -m. [detail]", ANI_GROUP_REPORT},
@@ -551,36 +551,26 @@ static error_t parse_ani(int key, char *arg, struct argp_state *state)
 		{
 			if (!has_reflist || !has_qrylist)
 			{
-				printf("\nError: --reflist and --qrylist must be used together.\n\n");
-				argp_state_help(state, stdout, ARGP_HELP_STD_HELP);
-				argp_usage(state);
+				argp_error(state, "--reflist and --qrylist must be used together");
 			}
 			if (ani_opt.refdir[0] != '\0' || ani_opt.qrydir[0] != '\0')
 			{
-				printf("\nError: --reflist/--qrylist use auto ANI inputs; do not combine them with -r, -q, or --qraw.\n\n");
-				argp_state_help(state, stdout, ARGP_HELP_STD_HELP);
-				argp_usage(state);
+				argp_error(state, "--reflist/--qrylist cannot be combined with -r, -q, or --qraw");
 			}
 			if (ani_opt.pair || ani_opt.num_remaining_args > 0)
 			{
-				printf("\nError: --reflist/--qrylist cannot be combined with --pair or positional inputs.\n\n");
-				argp_state_help(state, stdout, ARGP_HELP_STD_HELP);
-				argp_usage(state);
+				argp_error(state, "--reflist/--qrylist cannot be combined with --pair or positional inputs");
 			}
 		}
 		else if (ani_opt.pair)
 		{
 			if (ani_opt.refdir[0] != '\0' || ani_opt.qrydir[0] != '\0')
 			{
-				printf("\nError: --pair uses positional FASTA/FASTQ/sketch inputs; do not combine it with -r, -q, or --qraw.\n\n");
-				argp_state_help(state, stdout, ARGP_HELP_STD_HELP);
-				argp_usage(state);
+				argp_error(state, "--pair cannot be combined with -r, -q, or --qraw");
 			}
 			if (ani_opt.num_remaining_args < 2)
 			{
-				printf("\nError: --pair requires one reference input followed by at least one query input.\n\n");
-				argp_state_help(state, stdout, ARGP_HELP_STD_HELP);
-				argp_usage(state);
+				argp_error(state, "--pair requires one reference input followed by at least one query input");
 			}
 		}
 			else if (ani_opt.refdir[0] == '\0' && ani_opt.qrydir[0] == '\0' &&
@@ -596,17 +586,13 @@ static error_t parse_ani(int key, char *arg, struct argp_state *state)
 			}
 			else if (ani_opt.qrydir[0] == '\0')
 			{
-				printf("\nError: Mandatory options: '-q' or '--qraw' are missing unless positional inputs are used.\n\n");
-				argp_state_help(state, stdout, ARGP_HELP_STD_HELP);
-				argp_usage(state);
+				argp_error(state, "missing query: use -q, --qraw, or positional reference and query inputs");
 			}
 			else if (ani_opt.refdir[0] == '\0')
 			{
 				if (ani_opt.fmt == 0)
 				{
-					printf("\nError: -r/--ref is required with -q/--query or --qraw for detail output. Use -m1 or -m2 for one-sketch self matrices.\n\n");
-					argp_state_help(state, stdout, ARGP_HELP_STD_HELP);
-					argp_usage(state);
+					argp_error(state, "-r/--ref is required for detail output; use -m1 or -m2 for one-sketch self matrices");
 				}
 			}
 		if (ani_opt.s < -9 || ani_opt.s > 9 || ani_opt.s == 0)

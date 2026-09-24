@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.1.1-dev (Unreleased)
+
+- Reject missing mandatory CLI arguments with exit status 64 and diagnostics
+  on stderr; propagate `place` failure status through command dispatch.
+  Empty sequence lists and invalid `set` inputs no longer silently succeed.
+- Preserve ANI 1 / distance 0 at the full-overlap, zero-observed-mismatch
+  boundary for Best/Recalibrated output. Previously the learned recalibration
+  could add a small residual even to identical sketches, including at fold 0.
+  Nonzero-mismatch and partial-overlap calibration is unchanged.
+- Reject modern sketch directories passed to legacy `dist` with an explicit
+  format explanation and directions to `ani`/`matrix`.
+- Add `sketch --asone --sample-name NAME`. The default first-input label is
+  retained for compatibility; naming does not alter either mate's sketch data.
+- Document missing matrix values and the existing `--exception 2` option:
+  distance 2 / ANI -1 are unambiguous sentinels. Numeric defaults are unchanged.
+
+The published `v3.1.0` tag and its benchmarking records remain unchanged.
+
 ## 3.1.0 (2026-09-23)
 
 First tagged release of the minimal public native CLI. The version follows

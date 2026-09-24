@@ -61,7 +61,7 @@ static struct argp_option opt_dist[] =
 
 static char doc_dist[] =
   "\n"
-  "Legacy cofile-style distance command. For current KSSD3A sketch directories, use `matrix` for distances or `ani` for ANI estimates."
+  "Legacy cofile-style distance command (cofiles.stat/mcofiles.stat). Modern lcofiles.stat sketches are not supported: use `matrix` for distances or `ani` for ANI estimates."
   "\v"
   "This compatibility command expects older cofiles.stat/mcofiles.stat-style inputs and may not accept sketch directories produced by the current `sketch` command.\n"
   "If -r is omitted, KSSD3 computes pairwise distances among query inputs.\n"
@@ -283,20 +283,18 @@ static error_t parse_dist(int key, char* arg, struct argp_state* state) {
 				dist_opt_val.num_remaining_args = state->argc - state->next;
         dist_opt_val.remaining_args  = state->argv + state->next;	
 			break;
-    case ARGP_KEY_NO_ARGS:
+    case ARGP_KEY_END:
     {
-			if(state->argc < 2)
-      	{
-				printf("\v");
-				argp_state_help(state,stdout,ARGP_HELP_SHORT_USAGE);
-				printf("\v");
-      	argp_state_help(state,stdout,ARGP_HELP_LONG);
-      	printf("\v");
-				exit(0);
-				};
-      	return EINVAL;
+      if (!dist_opt_val.refpath[0] && !dist_opt_val.fpath[0] &&
+          dist_opt_val.num_remaining_args == 0)
+        argp_error(state, "missing legacy sketch or sequence inputs");
+      for (int i = -1; i < dist_opt_val.num_remaining_args; ++i) {
+        const char *path = i < 0 ? dist_opt_val.refpath : dist_opt_val.remaining_args[i];
+        if (path[0] && file_exists_in_folder((char *)path, "lcofiles.stat"))
+          argp_error(state, "'%s' is a modern sketch (lcofiles.stat); dist expects legacy cofiles.stat/mcofiles.stat. Use ani or matrix for modern sketches", path);
+      }
+      break;
     }
-   break;
    default:
 		{
 #ifdef _OPENMP

@@ -14,6 +14,7 @@
 #include <string.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sysexits.h>
 #include <time.h>
 
 #undef OBJ_BITS
@@ -1918,13 +1919,15 @@ int cmd_place(struct argp_state *state) {
             state->next += argc - 1;
             return 0;
         } else {
+            fprintf(stderr, "Error: unknown option or missing value: %s\n", argv[i]);
             usage(stderr);
-            return 2;
+            return EX_USAGE;
         }
     }
     if (!tree_path || !idmap_path || !dist_path || !out_path) {
+        fprintf(stderr, "Error: --tree, --idmap, --distances, and --out are required\n");
         usage(stderr);
-        return 2;
+        return EX_USAGE;
     }
     if (query_sketch && query_sketch_list) {
         die("--query-sketch and --query-sketch-list are mutually exclusive");

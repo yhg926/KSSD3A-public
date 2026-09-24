@@ -133,19 +133,19 @@ static error_t parse_composite(int key, char* arg, struct argp_state* state) {
 			composite_opt.remaining_args  = state->argv + state->next;
 			break;
 		}
-    case ARGP_KEY_NO_ARGS:
-    {	
-			if(state->argc<2)
-			{
-      	printf("\v");
-				argp_state_help(state,stdout,ARGP_HELP_SHORT_USAGE);
-				printf("\v");
-      	argp_state_help(state,stdout,ARGP_HELP_LONG);
-      	printf("\v");
-      	return EINVAL;
-			}
-    }
-		break;
+    case ARGP_KEY_END:
+      if (composite_opt.d) {
+        if (composite_opt.num_remaining_args == 0)
+          argp_error(state, "-d requires an abundance-vector input");
+      } else {
+        if (!composite_opt.refdir[0])
+          argp_error(state, "missing -r/--ref; use -d to inspect an abundance vector");
+        if (!composite_opt.qrydir[0] && !composite_opt.i && composite_opt.s == -1)
+          argp_error(state, "choose a composite mode: -q, -i, or -s");
+        if (composite_opt.s != -1 && composite_opt.num_remaining_args == 0)
+          argp_error(state, "-s requires a query abundance-vector input");
+      }
+      break;
     default:
       return ARGP_ERR_UNKNOWN;
   }

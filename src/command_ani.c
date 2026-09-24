@@ -1003,6 +1003,15 @@ static inline void fill_row_calibration(ani_row_t *r, bool unassembled,
         r->best_guarded = 0;
         return;
     }
+    /* Do not introduce a regression residual at the full-overlap zero-mismatch boundary. */
+    if (r->XnY_ctx > 0 && r->N_diff_obj == 0 && r->N_diff_obj_section == 0 &&
+        r->N_mut2_ctx == 0 && r->af_qry == 1.0 && r->af_ref == 1.0) {
+        r->calibrated_ani = 1.0;
+        r->best_ani = 1.0;
+        r->confidence = ANI_CONF_HIGH;
+        r->best_guarded = 0;
+        return;
+    }
     r->calibrated_ani = refaf_hgb_predict_ani(r->ani, r->af_ref, (unsigned int)r->XnY_ctx,
                                               (unsigned int)r->N_diff_obj,
                                               (unsigned int)r->N_diff_obj_section,

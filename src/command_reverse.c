@@ -103,16 +103,7 @@ static error_t parse_reverse(int key, char *arg, struct argp_state *state)
 	}
 	case ARGP_KEY_NO_ARGS:
 	{
-		if (state->argc < 2)
-		{
-			printf("\v");
-			argp_state_help(state, stdout, ARGP_HELP_SHORT_USAGE);
-			printf("\v");
-			argp_state_help(state, stdout, ARGP_HELP_LONG);
-			printf("\v");
-			exit(0);
-		};
-		return EINVAL;
+		argp_error(state, "missing sketch directory to reverse");
 	}
 	break;
 	default:

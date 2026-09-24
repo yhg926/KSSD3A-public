@@ -349,6 +349,20 @@ Treat multiple inputs as one final sample:
 kssd3a sketch --asone -f8 -o combined_sample lane1.fq.gz lane2.fq.gz
 ```
 
+All input mates/lanes are merged. By default the stored sample name is the
+first input path; this does not mean only the first file was used. To give the
+merged sample a stable label, use `--sample-name` with raw-input `--asone`:
+
+```bash
+kssd3a sketch --asone --sample-name sample01 -A --conflict -f8 \
+  -o sample01_sketch R1.fq.gz R2.fq.gz
+```
+
+The name must be nonempty, shorter than the sketch's fixed-width name field,
+and contain no control characters (including tabs/newlines). This option
+cannot be combined with maintenance modes, `--splitmfa`, or `--separate`.
+It changes only the output label, not counts, positions, or sequence metadata.
+
 Keep unrelated inputs as independent one-sample sketch directories. The batch
 directory receives `query_sketches.txt`, ready for `matrix --query-sketch-list`
 and `place --query-sketch-list`:
@@ -613,6 +627,13 @@ values now fail with a clear error instead of silently filtering all hits.
 A distance of 0.001 is 0.1% divergence; an ANI of 0.999 is 99.9%.
 Do not interpret sketch-derived distance as an exact SNP count.
 
+For assembled-style `best` and `recalibrated` comparisons, complete retained
+context overlap in both directions with zero observed object mismatches reports
+ANI 1 (distance 0). This prevents a learned calibration residual at that boundary;
+v3.1.0 could report slightly below 1, including at fold 0. Identical retained
+sketches do not prove whole-genome identity, especially after subsampling.
+Comparisons with partial overlap or observed mismatches retain their calibration.
+
 ```bash
 kssd3a ani -r ref_sketches -q qry_sketches --metric best \
   --format matrix --values ani -o ani_matrix.tsv
@@ -840,6 +861,21 @@ ANI matrix output:
 ```bash
 kssd3a ani -r ref_sketches -q qry_sketches -m1 -s -1 -o ani_matrix.tsv
 ```
+
+Missing matrix comparisons use `--exception 1` by default: distance `1` or ANI
+`0`. Context-based metrics also use this sentinel when alignment fraction fails
+`--afcut`; Mash/AAF and their fallback modes can still compute a value at low
+overlap. These defaults are kept for compatibility, but cannot distinguish
+missing values from numeric endpoints. Set `--exception 2` for distance `2` or
+ANI `-1`, then treat those values as missing in downstream analysis:
+
+```bash
+kssd3a ani -r ref_sketches -q qry_sketches --format matrix \
+  --values ani --exception 2 -o ani_matrix_with_missing.tsv
+```
+
+Do not send these sentinels directly to tree-building or statistical tools.
+`--anicut`, `--ctxcut`, and `--top` primarily filter detail rows, not matrix cells.
 
 One-sketch self ANI matrix:
 

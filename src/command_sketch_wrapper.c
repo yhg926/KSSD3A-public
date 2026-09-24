@@ -17,6 +17,7 @@
 #include <stdbool.h>
 #include <math.h>
 #include <stdint.h>
+#include <ctype.h>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -38,6 +39,7 @@ struct arg_sketch
   int dedup_ctxcut_seen;
   int dedup_strategy_seen;
   int dedup_index_seen;
+  const char *sample_name;
 };
 
 enum
@@ -72,7 +74,8 @@ enum
   SKETCH_DROP_POSITION = 910,
   SKETCH_DEDUP_STRATEGY = 911,
   SKETCH_UNIQUE_INDEX = 912,
-  SKETCH_SEPARATE_OUTPUTS = 913
+  SKETCH_SEPARATE_OUTPUTS = 913,
+  SKETCH_SAMPLE_NAME = 914
 };
 
 static struct argp_option opt_sketch[] =
@@ -110,6 +113,7 @@ static struct argp_option opt_sketch[] =
 
         {0, 0, 0, 0, "Sample layout:", SKETCH_GROUP_LAYOUT},
         {"asone", 'a', 0, 0, "Treat input genomes as parts of one final genome.", SKETCH_GROUP_LAYOUT},
+        {"sample-name", SKETCH_SAMPLE_NAME, "NAME", 0, "Label one --asone sample; default is the first input path.", SKETCH_GROUP_LAYOUT},
         {"separate", SKETCH_SEPARATE_OUTPUTS, 0, 0, "Write one sketch directory per input under -o, with query_sketches.txt.", SKETCH_GROUP_LAYOUT},
         {"splitmfa", 888, 0, 0, "Treat a multi-FASTA file as many genomes.", SKETCH_GROUP_LAYOUT},
 
@@ -547,6 +551,16 @@ static error_t parse_sketch(int key, char *arg, struct argp_state *state)
     sketch_opt.print_mode = 4;
     break;
   }
+  case SKETCH_SAMPLE_NAME:
+  {
+    if (!arg[0] || strlen(arg) >= PATHLEN)
+      argp_error(state, "--sample-name must contain 1..%d bytes", PATHLEN - 1);
+    for (const unsigned char *p = (const unsigned char *)arg; *p; ++p)
+      if (iscntrl(*p))
+        argp_error(state, "--sample-name must not contain control characters");
+    sketch->sample_name = arg;
+    break;
+  }
   case ARGP_KEY_ARGS:
   {
     sketch_opt.num_remaining_args = state->argc - state->next;
@@ -566,6 +580,9 @@ static error_t parse_sketch(int key, char *arg, struct argp_state *state)
                      + (sketch_opt.unique_index[0] != '\0' ? 1 : 0);
     if (mode_count > 1)
       argp_error(state, "Use only one of --merge, --append, --remove, --keep, --dedup, --sketchQC, --psmp/--psketch/--pindex/--ppos, -i/--index, or --unique-index.");
+    if (sketch->sample_name && (!sketch_opt.asone || mode_count != 0 ||
+                              sketch_opt.split_mfa || sketch_opt.separate_outputs))
+      argp_error(state, "--sample-name requires raw-input --asone mode without --splitmfa or --separate");
     if (sketch_opt.separate_outputs)
     {
       if (mode_count != 0)
@@ -689,14 +706,11 @@ static error_t parse_sketch(int key, char *arg, struct argp_state *state)
     int klen = sketch_opt.iolen + 2 * (sketch_opt.holen + sketch_opt.hclen);
     if (klen > 32)
     {
-      printf("\nError: k-mer length %d should smaller than 32 \n\n", klen);
-      exit(1);
+      argp_error(state, "k-mer length %d must be at most 32", klen);
     }
     if (mode_count == 0 && sketch_opt.index[0] == '\0' && sketch_opt.unique_index[0] == '\0' && sketch_opt.fpath == NULL && sketch_opt.num_remaining_args == 0)
     {
-      printf("\nError: missing input sequences file \n\n");
-      argp_state_help(state, stdout, ARGP_HELP_STD_HELP);
-      argp_usage(state);
+      argp_error(state, "missing input sequence files; provide FASTA/FASTQ paths or --list");
     }
     break;
   }
@@ -1007,6 +1021,25 @@ static int sketch_dedup_raw_build_from_inputs(sketch_opt_t *opt)
   return kept_samples;
 }
 
+static void name_asone_sample(const char *outdir, const char *name)
+{
+  char *path = format_string("%s/%s", outdir, sketch_stat);
+  FILE *fp = fopen(path, "r+b");
+  if (!fp)
+    err(EXIT_FAILURE, "cannot open sample metadata %s", path);
+  dim_sketch_stat_t stat;
+  if (fread(&stat, sizeof(stat), 1, fp) != 1 || stat.infile_num != 1)
+    errx(EXIT_FAILURE, "--sample-name requires exactly one output sample in %s", path);
+  char label[PATHLEN] = {0};
+  snprintf(label, sizeof(label), "%s", name);
+  /* Change only the stored label, leaving input paths and merged data intact. */
+  if (fseek(fp, sizeof(stat), SEEK_SET) != 0 || fwrite(label, sizeof(label), 1, fp) != 1)
+    err(EXIT_FAILURE, "cannot write sample label in %s", path);
+  if (fclose(fp) != 0)
+    err(EXIT_FAILURE, "cannot close sample metadata %s", path);
+  free(path);
+}
+
 int cmd_sketch(struct argp_state *state)
 {
   struct arg_sketch sketch = {
@@ -1193,10 +1226,12 @@ int cmd_sketch(struct argp_state *state)
       // initialize k-mer rearrange method: reorder_unituple_by_coden_pattern64() or uint64_kmer2ctxobj()
       set_uint64kmer2generic_ctxobj(sketch_opt.coden_ctxobj_pattern);
       compute_sketch(&sketch_opt, infile_stat);
+      if (sketch.sample_name)
+        name_asone_sample(sketch_opt.outdir, sketch.sample_name);
     }
     else
     {
-      printf("not valid fas/fastq files!\n");
+      errx(EXIT_FAILURE, "no valid FASTA/FASTQ input files");
     }
     free(infile_stat->organized_infile_tab);
   }

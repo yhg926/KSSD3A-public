@@ -264,8 +264,12 @@ static error_t parse_global(int key, char* arg, struct argp_state* state)
 				cmd_matrix(state);
 	    else if(strcmp(arg, "ani") == 0)
         cmd_ani(state);
-      else if(strcmp(arg, "place") == 0)
-        cmd_place(state);
+      else if(strcmp(arg, "place") == 0) {
+        /* Unlike legacy handlers that return counts, place returns an exit status. */
+        int status = cmd_place(state);
+        if (status != 0)
+          exit(status);
+      }
 			else if(strcmp(arg, "primer") == 0)
 					for(int i = 8;i<52;i++ )
 				 		printf("%llu\n",find_lgst_primer_2pow(i));

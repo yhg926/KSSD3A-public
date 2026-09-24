@@ -76,7 +76,7 @@ kssd3a ani -r references -q query --format detail -o matches.tsv
 Paired FASTQ files from one sample must be merged into one sketch sample:
 
 ```bash
-kssd3a sketch --asone --conflict -A -f8 -p4 -o reads R1.fq.gz R2.fq.gz
+kssd3a sketch --asone --sample-name sample01 --conflict -A -f8 -p4 -o reads R1.fq.gz R2.fq.gz
 kssd3a ani -r references --qraw reads --anicut 0.95 -o reads_matches.tsv
 ```
 
@@ -90,6 +90,12 @@ low-divergence metric choices.
 - ANI and alignment fractions use 0..1, not 0..100. Use `--anicut 0.95`.
 - `ani --format matrix` alone writes distances by default. Add
   `--values ani` for similarity; `matrix` always reports distances.
+- Missing or insufficient-overlap matrix entries use a numeric sentinel,
+  not a measured distance: by default 1 for distance / 0 for ANI. Use
+  `ani --exception 2` for unambiguous sentinels, 2 for distance / -1 for ANI,
+  and mask them as missing before plotting or other numerical analysis.
+- `--asone` consumes all input mates/lanes but historically uses the first
+  input path as the sample label. `--sample-name` overrides only that label.
 - `dist` is a legacy-format command. Use `ani` or `matrix` for new sketches.
 - An empty result may mean low overlap or a filter removed all hits. Check
   input layout, compatible sketch parameters, and detail-output overlap.
@@ -98,3 +104,12 @@ low-divergence metric choices.
 
 Next: [choose a workflow](workflows.md), [full manual](kssd3a_user_manual.md),
 or `kssd3a ani --help`.
+
+## Exit Status
+
+Successful commands and explicit `--help` return 0. Missing mandatory
+arguments and invalid CLI syntax return 64. Input/processing failures return
+nonzero (for example, a missing file can return 2); do not assume every
+runtime failure uses one fixed code. Diagnostics go to stderr on these paths.
+Use `set -e` in shell scripts, and `set -o pipefail` when a failed command is
+not the last element of a pipeline.

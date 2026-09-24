@@ -200,19 +200,12 @@ static error_t parse_set(int key, char* arg, struct argp_state* state) {
 			set_opt.num_remaining_args = state->argc - state->next;
 			set_opt.remaining_args  = state->argv + state->next;
 			break;
-    case ARGP_KEY_NO_ARGS:
-    {	
-			if(state->argc<2)
-			{
-      	printf("\v");
-				argp_state_help(state,stdout,ARGP_HELP_SHORT_USAGE);
-				printf("\v");
-      	argp_state_help(state,stdout,ARGP_HELP_LONG);
-      	printf("\v");
-				return EINVAL;
-			}
-    }
-		break;
+    case ARGP_KEY_END:
+      if (set_opt.num_remaining_args == 0)
+        argp_error(state, "missing input sketch directory");
+      if (set_opt.operation == -1 && !set_opt.P && !set_opt.show && !set_opt.subsetf[0])
+        argp_error(state, "missing set operation; use --union, --subtract, --intersect, or an inspection mode");
+      break;
     default:
       return ARGP_ERR_UNKNOWN;
   }
@@ -282,11 +275,14 @@ int cmd_set(struct argp_state* state)
 			if(set_opt.P) {
 				if(file_exists_in_folder(set_opt.insketchpath,co_dstat)) print_gnames(&set_opt);
 				else if(file_exists_in_folder(set_opt.insketchpath,sketch_stat)) print_lco_gnames(&set_opt);
-				else printf("%s is not a valid sketch\n",set_opt.insketchpath );
+				else errx(EXIT_FAILURE, "%s is not a valid sketch", set_opt.insketchpath);
+				return 0;
 
 			}
 			else if(set_opt.show > 0){
 					if(file_exists_in_folder(set_opt.insketchpath,sketch_stat)) show_content(&set_opt);
+					else errx(EXIT_FAILURE, "%s is not a valid modern sketch", set_opt.insketchpath);
+					return 0;
 			}
 			else if (set_opt.subsetf[0]!='\0') {
 				if(file_exists_in_folder(set_opt.insketchpath,co_dstat))
@@ -295,10 +291,8 @@ int cmd_set(struct argp_state* state)
 					return lgrouping_genomes(&set_opt);
 
 			}
-			else printf("set operation use : -u, -q, -i or -s\n");
-			return -1 ;
+			errx(EXIT_FAILURE, "invalid sketch input or unsupported set operation: %s", set_opt.insketchpath);
 		}
 	}
-	else
-		return -1;
+	errx(EXIT_FAILURE, "invalid sketch input for set operation: %s", set_opt.insketchpath);
 }

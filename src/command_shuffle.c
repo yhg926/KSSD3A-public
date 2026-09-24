@@ -82,12 +82,7 @@ static error_t parse_shuffle(int key, char* arg, struct argp_state* state) {
     {	
 			if(state->argc<2)
 			{
-      	printf("\v");
-				argp_state_help(state,stdout,ARGP_HELP_SHORT_USAGE);
-				printf("\v");
-      	argp_state_help(state,stdout,ARGP_HELP_LONG);
-      	printf("\v");
-      	return EINVAL;
+				argp_error(state, "missing shuffle options; use --help for parameters");
 			}
     }
    	break;
