@@ -53,6 +53,8 @@ typedef struct ani_opt
 	bool sketch_split_mfa;
 	bool sketch_coden_ctxobj_pattern;
 	char index[PATHLEN];
+	bool unique_ctx;
+	char unique_ctx_report[PATHLEN];
 	char qrydir[PATHLEN];
 	char refdir[PATHLEN];
 	char qrylist[PATHLEN];
@@ -432,7 +434,33 @@ static inline int idani_select_topN_sorted(idani_t *arr, int m, int topN)
 
 #define MCTX(L, X, Y) (ctx[(size_t)((L) * (X) + (Y))])
 #define MOBJ(L, X, Y) (obj[(size_t)((L) * (X) + (Y))])
-static inline void count_ctx_obj_frm_comb_sketch_section(ctx_mut2_t *ctx, obj_section_t *obj, ctxgidobj_t *ctxgidobj_arr, size_t ref_sksize, int ref_gnum, const uint32_t *ref_ctx_count, const uint32_t *qry_ctx_count_block, int section_gnum, uint64_t *section_sk, uint64_t *section_skidx, uint32_t *num_passid_block, idani_t **sort_idani_block, ani_opt_t *ani_opt)
+static inline bool ani_use_unique_context(uint32_t matched, uint32_t full_reference)
+{
+	return full_reference > 0 && (uint64_t)matched * 20 >= full_reference;
+}
+
+static inline double ani_context_naive_dist(ctx_mut2_t ctx, obj_section_t obj)
+{
+	ani_features_t f = {0};
+	f.XnY_ctx = ctx.num_ctx;
+	f.N_mut2_ctx = ctx.num_mut2_ctx;
+	f.N_diff_obj = obj.diff_obj;
+	f.N_diff_obj_section = obj.diff_obj_section;
+	return get_naive_dist(&f);
+}
+
+/* Keep double precision for adaptive filtering/ranking without changing the
+ * legacy float ranking or its allocation layout in other ANI/matrix paths. */
+typedef struct { double ani; uint32_t id; } unique_ctx_rank_t;
+
+static int compare_unique_ctx_rank(const void *a, const void *b)
+{
+	const unique_ctx_rank_t *x = a, *y = b;
+	if (x->ani != y->ani) return x->ani < y->ani ? 1 : -1;
+	return (x->id > y->id) - (x->id < y->id);
+}
+
+static inline void count_ctx_obj_frm_comb_sketch_section_with_unique(ctx_mut2_t *ctx, obj_section_t *obj, ctxgidobj_t *ctxgidobj_arr, size_t ref_sksize, int ref_gnum, const uint32_t *ref_ctx_count, const uint32_t *qry_ctx_count_block, int section_gnum, uint64_t *section_sk, uint64_t *section_skidx, uint32_t *num_passid_block, idani_t **sort_idani_block, ani_opt_t *ani_opt, ctx_mut2_t *unique_ctx, obj_section_t *unique_obj, size_t *cached_fenceposts)
 {
 	uint32_t nobjbits = Bitslen.obj;
 	uint64_t gidmask = UINT64_MAX >> (64 - GID_NBITS), objmask = (1UL << nobjbits) - 1;
@@ -443,10 +471,11 @@ static inline void count_ctx_obj_frm_comb_sketch_section(ctx_mut2_t *ctx, obj_se
 	// for fencepost methods
 	int k = 17;
 	size_t buckets = (size_t)1u << k;
-	size_t *F= (size_t*) malloc((buckets + 1) * sizeof(*F) );
-	if(kssd_build_fenceposts_ctxgid(ctxgidobj_arr, ref_sksize,k,F) != 0) {
+	size_t *F = cached_fenceposts ? cached_fenceposts : malloc((buckets + 1) * sizeof(*F));
+	if (!F) err(EXIT_FAILURE, "%s(): allocate fenceposts", __func__);
+	if (!cached_fenceposts && kssd_build_fenceposts_ctxgid(ctxgidobj_arr, ref_sksize,k,F) != 0) {
 		free(F);
-		return;
+		errx(EXIT_FAILURE, "%s(): invalid context index", __func__);
 	}
 
 #pragma omp parallel for num_threads(ani_opt->p) schedule(guided)
@@ -485,6 +514,10 @@ static inline void count_ctx_obj_frm_comb_sketch_section(ctx_mut2_t *ctx, obj_se
 			//	(j < a_size - 1 && (a[j] >> Bitslen.obj) == (a[j + 1] >> Bitslen.obj)))
 			//	continue;
 			size_t d = idx[j];
+			size_t ref_owners = 0;
+			uint32_t sole_gid = 0;
+			int sole_diff = 0;
+			bool sole_allowed = false;
 			while (d < ref_sksize && (ctxgidobj_arr[d].ctxgid >> GID_NBITS) == (a[j] >> nobjbits))
 			{
 				const uint64_t ctxgid = ctxgidobj_arr[d].ctxgid;
@@ -492,6 +525,10 @@ static inline void count_ctx_obj_frm_comb_sketch_section(ctx_mut2_t *ctx, obj_se
 				const size_t ref_run_begin = d;
 				do { ++d; } while (d < ref_sksize && ctxgidobj_arr[d].ctxgid == ctxgid);
 				const size_t ref_run_end = d;
+				if (unique_ctx) {
+					++ref_owners;
+					sole_gid = gid;
+				}
 				if (ani_opt->ignoreconflict && ref_run_end - ref_run_begin > 1)
 					continue;
 				MCTX(ref_gnum, i, gid).num_ctx++;
@@ -511,6 +548,10 @@ static inline void count_ctx_obj_frm_comb_sketch_section(ctx_mut2_t *ctx, obj_se
 					}
 					if (min_diff_obj_section == 0) break;
 				}
+				if (unique_ctx) {
+					sole_diff = min_diff_obj_section;
+					sole_allowed = true;
+				}
 
 				if(min_diff_obj_section){
 					MOBJ(ref_gnum, i, gid).diff_obj++;
@@ -520,12 +561,27 @@ static inline void count_ctx_obj_frm_comb_sketch_section(ctx_mut2_t *ctx, obj_se
 
 				}
 			}
+			// Ownership is decided from this complete unfiltered index group.
+			if (unique_ctx && ref_owners == 1 && sole_allowed) {
+				const size_t cell = (size_t)i * ref_gnum + sole_gid;
+				unique_ctx[cell].num_ctx++;
+				if (sole_diff) {
+					unique_obj[cell].diff_obj++;
+					unique_obj[cell].diff_obj_section += sole_diff;
+					if (sole_diff > 1)
+						unique_ctx[cell].num_mut2_ctx++;
+				}
+			}
 		}
 		free(idx);
 		if (fmt == 0)
 		{ // print details  >0:matrix no need to sort
 			// sorting ref gid by ani descendingly
 			num_passid_block[i] = 0;
+			unique_ctx_rank_t *ranks = ani_opt->unique_ctx
+				? malloc((size_t)ref_gnum * sizeof(*ranks)) : NULL;
+			if (ani_opt->unique_ctx && !ranks)
+				err(EXIT_FAILURE, "%s(): allocate adaptive ranking", __func__);
 			for (int j = 0; j < ref_gnum; j++)
 			{
 				uint32_t shared_ctx = MCTX(ref_gnum, i, j).num_ctx;
@@ -537,20 +593,43 @@ static inline void count_ctx_obj_frm_comb_sketch_section(ctx_mut2_t *ctx, obj_se
 										(double)shared_ctx / (double)ref_ctx_count[j]))
 					continue;
 				float dist = (float)MOBJ(ref_gnum, i, j).diff_obj / MCTX(ref_gnum, i, j).num_ctx / DIVIDOR;
-				float ani = 1 - dist;
+				double ani = (float)(1 - dist);
+				if (ranks) {
+					const size_t cell = (size_t)i * ref_gnum + j;
+					const bool use_unique = ani_use_unique_context(unique_ctx[cell].num_ctx, ref_ctx_count[j]);
+					ani = 1.0 - ani_context_naive_dist(
+						use_unique ? unique_ctx[cell] : ctx[cell],
+						use_unique ? unique_obj[cell] : obj[cell]);
+				}
 				if (ani < anicut)
 					continue;
+				if (ranks) ranks[num_passid_block[i]] = (unique_ctx_rank_t){ani, (uint32_t)j};
 				sort_idani_block[i][num_passid_block[i]].id = j;
 				sort_idani_block[i][num_passid_block[i]].ani = ani;
 				num_passid_block[i]++;
 			}
-			int out_n = idani_select_topN_sorted(sort_idani_block[i], (int)num_passid_block[i], ntop);
+			int out_n;
+			if (ranks) {
+				qsort(ranks, num_passid_block[i], sizeof(*ranks), compare_unique_ctx_rank);
+				out_n = num_passid_block[i] < (uint32_t)ntop ? (int)num_passid_block[i] : ntop;
+				for (int r = 0; r < out_n; ++r) sort_idani_block[i][r].id = ranks[r].id;
+				free(ranks);
+			} else out_n = idani_select_topN_sorted(sort_idani_block[i], (int)num_passid_block[i], ntop);
 			num_passid_block[i] = (uint32_t)out_n;  // downstream prints only topN now
 			//qsort(sort_idani_block[i], num_passid_block[i], sizeof(idani_t), compare_idani_desc);
 			//num_passid_block[i] = num_passid_block[i] < ntop ? num_passid_block[i] : ntop;
 		}
 	}
-	free(F);
+	if (!cached_fenceposts) free(F);
+}
+
+static inline void count_ctx_obj_frm_comb_sketch_section(ctx_mut2_t *ctx, obj_section_t *obj,
+	ctxgidobj_t *arr, size_t size, int refs, const uint32_t *ref_counts,
+	const uint32_t *qry_counts, int queries, uint64_t *keys, uint64_t *index,
+	uint32_t *passed, idani_t **sorted, ani_opt_t *opt)
+{
+	count_ctx_obj_frm_comb_sketch_section_with_unique(ctx, obj, arr, size, refs,
+		ref_counts, qry_counts, queries, keys, index, passed, sorted, opt, NULL, NULL, NULL);
 }
 
 static inline void count_ctx_obj_frm_comb_sketch_section_lower(

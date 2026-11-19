@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.2.0-rc.1 (Pre-release)
+
+- Add opt-in native `ani --unique-ctx` for read-to-reference Naive ANI. Use
+  reference-unique counts when matched unique contexts cover at least 5% of
+  full reference contexts; otherwise retain full-context ANI. Apply selection
+  before ANI filtering and top-N ranking; preserve full-context AF/count gates.
+- Add optional `--unique-ctx-report` diagnostics and explicit `NaiveUnique` /
+  `NaiveFull` metric labels without changing the detail table schema.
+- Bound adaptive counter/ranking blocks, reuse reference fenceposts across
+  batches, and memory-map the existing unfiltered inverted index. No new sketch
+  format, marker database, model coefficients or Python runtime dependency.
+- Test ownership, selection boundaries, ranking, conflicts, threads, batching,
+  coverage compatibility and output failures; add manual and tutorial examples.
+- Existing ANI defaults, assembly comparisons, matrix/dedup, browser sketching
+  and server configuration are unchanged. This release does not enable the
+  option in SketchHub automatically.
+
 ## 3.1.1-rc.1 (Pre-release)
 
 - Reject missing mandatory CLI arguments with exit status 64 and diagnostics

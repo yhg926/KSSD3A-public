@@ -31,6 +31,11 @@ with (root / 'reads.tsv').open() as handle:
     reads = list(csv.DictReader(handle, delimiter='\t'))
 assert len({r['Qry'] for r in reads}) == 1, 'Mates must form one sample'
 assert len(reads) == 2
+with (root / 'adaptive_reads.tsv').open() as handle:
+    adaptive = list(csv.DictReader(handle, delimiter='\t'))
+assert len(adaptive) == 2
+assert all(r['Selected_metric'] in ('NaiveFull', 'NaiveUnique') for r in adaptive)
+assert (root / 'unique_counts.tsv').stat().st_size > 0
 assert len((root / 'keep.txt').read_text().splitlines()) == 1
 print('PASS: 4 assembly comparisons; distance diagonal 0; similarity diagonal 1;')
 print('      paired reads form 1 sample; deduplication retains 1 representative.')

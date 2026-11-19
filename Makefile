@@ -91,6 +91,7 @@ test-smoke: all
 	"$(ROOT)/tests/smoke_main.sh"
 
 test-cli: test-smoke
+	python3 "$(ROOT)/tests/test_unique_context.py" "$(TARGET)"
 	python3 "$(ROOT)/tests/test_release_assets.py"
 	python3 "$(ROOT)/tests/test_cli_usability.py" "$(TARGET)"
 	python3 "$(ROOT)/tests/check_cli_docs.py" "$(TARGET)"

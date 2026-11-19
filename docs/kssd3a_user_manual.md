@@ -715,6 +715,63 @@ that sidecar, it falls back to exact markers unique only among the reported
 reference rows. If the query sketch lacks `comblco.a`, the added columns report
 `NA:query_missing_comblco.a`.
 
+#### Adaptive Unique-Context ANI (Opt-In)
+
+For read-to-reference comparisons, `--unique-ctx` can reduce interference from
+contexts shared by multiple reference genomes. Supply an unfiltered reference
+sketch, preferably with one representative per species, and build its inverted
+index first:
+
+```bash
+kssd3a sketch -i ref_sketches
+kssd3a ani -r ref_sketches --qraw read_qry_sketches --unique-ctx \
+  -f0.2 -n0.95 -p8 -o adaptive_matches.tsv
+```
+
+Direct FASTA/FASTQ queries through `--qraw` are also supported. No Python,
+separate marker database or `sketch --unique-index` is required. The option is
+off by default and does not change assembly ANI, matrix/dedup or read-to-read
+workflows. Do not use a marker-filtered reference sketch for this mode.
+
+A context is unique if it belongs to exactly one reference in the complete
+supplied index, regardless of its object sequence. Multiple objects in that
+reference still count as one owner; conflicting references count as owners
+even with `--ignoreconflict`. This differs from exact context+object uniqueness
+used for abundance markers.
+
+Let `U` be matched reference-unique contexts and `R` the full reference context
+count (after the existing reference conflict policy). When `R > 0` and
+`20 * U >= R`, ANI uses the existing calibrated Naive formula with unique-only
+counts. Otherwise it uses the same formula with full counts. The boundary is
+inclusive; this is not the maximum of the two ANI estimates. `R` is not the
+number of unique contexts. Selection precedes the ANI cutoff and top-N ranking.
+Full-context `--ctxcut` and `--afcut` gates still apply; their defaults are
+unchanged. The 5% rule is a support gate, not a confidence interval or a guarantee
+of unbiased ANI. Results depend on the reference database composition.
+
+The detail schema remains unchanged. `Selected_metric` is `NaiveUnique` or
+`NaiveFull`; count and AF columns always describe full-context matching.
+`--estimate-coverage` can append its existing coverage columns without changing
+these ANI fields. Adaptive ANI requires detail output, `-r` and `--qraw`;
+non-Naive metrics, `--unified-metric`, `--raw-output`, `--max-pdist` and
+`--max-diff-section` are rejected rather than silently ignored.
+
+Optional diagnostics include unique counts, unique ANI, unique-query AF,
+unique-reference AF and `Unique_RAF_fullref` (the fraction used for selection):
+
+```bash
+kssd3a ani -r ref_sketches --qraw read_qry_sketches --unique-ctx \
+  --unique-ctx-report unique_counts.tsv -o adaptive_matches.tsv
+```
+
+The report includes every pair with shared contexts before reporting filters.
+It must be a new file distinct from the primary output. `--unique-ctx-report`
+alone collects diagnostics but leaves the estimator unchanged. Computing the
+unique-reference denominator adds an index scan only when this report is
+requested. Adaptive searches memory-map the existing index and cap dense
+counter/ranking blocks at 64 MiB; mapped index pages, query keys and optional
+coverage data require additional memory. No environment override is necessary.
+
 ### 6.3 Assembly-To-Reads
 
 If reads are stored on the reference side and assemblies on the query side,

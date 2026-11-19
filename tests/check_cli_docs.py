@@ -42,6 +42,8 @@ def complete(command, previous, current):
 for command in ('ani', 'matrix', 'sketch'):
     assert 'p_dist' in complete(command, '--metric', '')
 assert '--estimate-coverage' in complete('ani', '', '--estimate')
+assert '--unique-ctx' in complete('ani', '', '--unique')
+assert '--unique-ctx-report' in complete('ani', '', '--unique')
 assert '--query-sketch-list' in complete('matrix', '', '--query-sketch')
 assert '--separate' in complete('sketch', '', '--separ')
 assert 'ani' in complete('ani', '--values', '')

@@ -55,7 +55,9 @@ enum
 	ANI_MAX_DIFF_OBJ_SECTION,
 	ANI_METRIC_NAME,
 	ANI_FORMAT_NAME,
-	ANI_OUTPUT_VALUES
+	ANI_OUTPUT_VALUES,
+	ANI_UNIQUE_CTX_REPORT,
+	ANI_UNIQUE_CTX
 };
 
 enum
@@ -105,6 +107,8 @@ static struct argp_option opt_ani[] =
 		{"outfile", 'o', "<FILE>", 0, "Output file. [STDOUT]", ANI_GROUP_REPORT},
 		{"raw-output", ANI_RAW_OUTPUT, 0, 0, "Skip calibrated/best ANI computation; selected calibrated metrics fall back to raw distances when unavailable.", ANI_GROUP_REPORT},
 		{"estimate-coverage", ANI_ESTIMATE_COVERAGE, 0, 0, "Append abundance-derived coverage/depth columns for --qraw detail output when the query sketch has comblco.a.", ANI_GROUP_REPORT},
+		{"unique-ctx", ANI_UNIQUE_CTX, 0, 0, "Adaptive read-to-reference Naive ANI: use reference-unique contexts when matches cover >=5% of full reference contexts; otherwise full contexts. Requires indexed -r and --qraw; detail only.", ANI_GROUP_MODE},
+		{"unique-ctx-report", ANI_UNIQUE_CTX_REPORT, "<FILE>", 0, "Write additional unfiltered unique-context counts to a new file; alone does not change ANI. Requires indexed -r, --qraw and detail output.", ANI_GROUP_REPORT},
 		{"top", 'N', "<INT>", 0, "Report at most top N references per query. [all]", ANI_GROUP_REPORT},
 
 		{0, 0, 0, 0, "Execution:", ANI_GROUP_EXECUTION},
@@ -263,6 +267,12 @@ static error_t parse_ani(int key, char *arg, struct argp_state *state)
 
 	switch (key)
 	{
+	case ANI_UNIQUE_CTX:
+		ani_opt.unique_ctx = true;
+		break;
+	case ANI_UNIQUE_CTX_REPORT:
+		copy_path_arg(state, "--unique-ctx-report", ani_opt.unique_ctx_report, sizeof(ani_opt.unique_ctx_report), arg);
+		break;
 	case ANI_METRIC_NAME:
 	{
 		const char *names[] = {"best", "recalibrated", "ctx-moe", "ctx-naive",
@@ -529,6 +539,16 @@ static error_t parse_ani(int key, char *arg, struct argp_state *state)
 			ani_opt.s = abs(ani_opt.s) * ani->output_values;
 		const bool has_reflist = ani_opt.reflist[0] != '\0';
 		const bool has_qrylist = ani_opt.qrylist[0] != '\0';
+		if (ani_opt.unique_ctx || ani_opt.unique_ctx_report[0]) {
+			if (!ani_opt.unassembled || ani_opt.fmt != 0 || !ani_opt.refdir[0] ||
+				!ani_opt.qrydir[0] || has_reflist || has_qrylist || ani_opt.num_remaining_args)
+				argp_error(state, "unique-context options require explicit -r/--qraw inputs and detail output");
+			if (ani_opt.unique_ctx && (ani_opt.unified_metric || ani_opt.raw_output || abs(ani_opt.s) > 4 ||
+				ani_opt.max_pdist_set || ani_opt.max_diff_obj_section >= 0))
+				argp_error(state, "--unique-ctx uses calibrated read-mode Naive ANI; incompatible metric, raw-output, unified-metric or close-pair filter");
+			if (ani_opt.unique_ctx_report[0] && strcmp(ani_opt.unique_ctx_report, ani_opt.outf) == 0)
+				argp_error(state, "--unique-ctx-report must differ from the ordinary output path");
+		}
 
 		if (ani->coden_pattern_seen && ani->manual_pattern_seen)
 			argp_error(state, "--use_coden_ctxobj selects the coden pattern; do not combine it with --ctxlen, --outerobjlen, or --innerobjlen.");
@@ -1061,6 +1081,9 @@ static bool paths_refer_to_same_file(const char *a, const char *b)
 
 static int run_sketch_ani(ani_opt_t *opt)
 {
+	if ((opt->unique_ctx || opt->unique_ctx_report[0]) &&
+		!file_exists_in_folder(opt->refdir, sorted_comb_ctxgid64obj32))
+		errx(EXIT_FAILURE, "unique-context options require an existing unfiltered reference inverted index; run sketch -i on the reference sketch");
 	if (opt->unassembled && !opt->afcut_set)
 		opt->afcut = 0.2f;
 
@@ -1072,7 +1095,7 @@ static int run_sketch_ani(ani_opt_t *opt)
 
 	ani_model_drfold = qry_dim_sketch_stat->drfold;
 	const_comask_init(qry_dim_sketch_stat);
-	const bool force_ref_index = force_ref_index_requested();
+	const bool force_ref_index = force_ref_index_requested() || opt->unique_ctx || opt->unique_ctx_report[0];
 	const int matrix_direct_n = opt->fmt ? ani_matrix_direct_threshold() : 0;
 	if (opt->refdir[0] == '\0')
 	{

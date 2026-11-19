@@ -61,6 +61,13 @@ Named metrics are available in `ani`, for example `--metric p_dist` or
 `--metric ctx-naive`. Existing numeric selectors still work.
 `p_dist` is a low-divergence proxy, **not an exact SNP counter**.
 
+For adaptive read-to-reference ANI, build the reference index with
+`kssd3a sketch -i refs`, then add `--unique-ctx` to `ani -r refs --qraw reads`.
+This opt-in mode uses reference-unique contexts only when their matches cover
+at least 5% of full reference contexts; otherwise it retains full-context ANI.
+See the manual's "Adaptive Unique-Context ANI" section for assumptions and
+diagnostics. Existing defaults are unchanged.
+
 For distance matrices, reviewed dedup plans, coverage, and experimental
 placement, see the [workflow guide](docs/workflows.md). Use `ani` or `matrix`
 for current sketches; `dist` expects legacy-format files.

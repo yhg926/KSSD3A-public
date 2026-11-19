@@ -26,6 +26,11 @@ DATA=$ROOT/examples/data
     "$DATA/reads_R1.fq" "$DATA/reads_R2.fq"
 "$BIN" ani -r "$OUT/assemblies" --qraw "$OUT/reads" --anicut 0 --afcut 0 \
     -o "$OUT/reads.tsv"
+# Native opt-in selection; the toy reference pair is not a species database.
+"$BIN" sketch -i "$OUT/assemblies"
+"$BIN" ani -r "$OUT/assemblies" --qraw "$OUT/reads" --unique-ctx \
+    --anicut 0 --afcut 0 --unique-ctx-report "$OUT/unique_counts.tsv" \
+    -o "$OUT/adaptive_reads.tsv"
 "$BIN" matrix --format dedup-plan --metric p_dist --cut 0.001 \
     --keep-out "$OUT/keep.txt" -o "$OUT/plan.tsv" "$OUT/assemblies"
 "$BIN" sketch --keep "$OUT/keep.txt" -o "$OUT/representatives" "$OUT/assemblies"

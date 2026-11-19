@@ -56,6 +56,13 @@ consume abundance.
 
 ## Swap Rule
 
+Exception: `--unique-ctx` and `--unique-ctx-report` explicitly require the full
+unfiltered reference inverted index, including for one query. They bypass
+streaming and memory-map that index without requiring an environment override.
+Adaptive counting reuses fenceposts across bounded blocks; total unique
+reference counts need an extra scan only for the optional report. The default
+dispatch described below remains unchanged when both options are absent.
+
 For one or a few query samples against a larger reference sketch,
 prefer the small-query/ref-stream path:
 
